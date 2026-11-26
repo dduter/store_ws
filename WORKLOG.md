@@ -194,3 +194,27 @@
 ### Detailed Changes
 - `/home/yongsoo/ws_cobot_pjt/ws_dsr/`: 이전했던 `config/`, `data/`, `scripts/`, `src/store_*`, `build/store_*`, `install/store_*`, 문서 파일 제거(기존 `doosan-robot2`/`onrobot-ros2`/`rg2`/`rokey1` 원본 보존).
 - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`, `README.md`: `store_ws` 단일 Overlay 구조로 정리.
+
+## 2026-11-26 21:52 — 1일차 마무리: 레포명 `store_ws` 확정, `sod` 통합 및 실물·팀 싱크 검증 요약
+
+### Goal / Background
+- 1일차 로봇 파트 작업 마무리: GitHub 레포명 확정(`dduter/store_ws`), 터미널 `sod` alias 통합, 실물 로봇 검증 결과 및 팀원(LLM·비전 A/B) 싱크 정리 기록.
+
+### Responsible Agent(s)
+- **Antigravity**: GitHub 레포명 변경(`24h-store-cobot` → `store_ws`), `~/.bashrc` `sod` 통합 및 새 셸 라이브 검증, LLM·비전 A/B 싱크 회신문 작성.
+
+### Detailed Changes
+- GitHub 저장소 이름 변경: `https://github.com/dduter/store_ws`
+- `/home/yongsoo/.bashrc`: `sod` alias가 `~/ws_cobot_pjt/ws_dsr/install/setup.bash`와 `~/store_ws/install/local_setup.bash`를 함께 로드하도록 갱신.
+
+### Verification & Review
+- **실물 로봇(M0609 + RG2) 검증 완료**:
+  - Eye-in-Hand 캘리브레이션(`T_gripper2camera.npy`, 재투영 오차 `0.39 px`, `verify.py` 과일 모형 파지 확인)
+  - `teach_zones`로 `home`, 임시 `scan_pose`, `z_min_mm(-13.78 mm)` 실측 저장
+  - 실물 `executor_node`로 `home`, `scan_pose`, `Z_MIN_VIOLATION` 차단, `GRASP_FAIL` 안전 후퇴·개방(`final_pose z=259.99 mm, rz=0.61°`) 동작 검증 완료
+- **소프트웨어 검증 완료**: `pytest` **56 / 56 통과**, 롤백 후 `sod` 단독 새 셸 라이브 스모크 테스트 통과.
+
+### Follow-ups / Next Steps (내일 이어서 할 일)
+1. LLM·비전 A/B 담당자 회신 확인 (`mm`+`deg`, `zones.buffer_slots`, 3종 카테고리, `store_interfaces` 6개 파일 일치, `Z_surface` 오프셋 담당).
+2. 실제 상품 6–9종으로 실물 `pick_place` 완주 및 `reorient`(180° 뒤집기) 파지·회전 실측 튜닝.
+3. 테이블 세팅 확정 후 `teach_zones`로 최종 `scan_pose`, `zones.buffer_slots` 2–4개, `employee_handover_pose` 실측 업데이트.
