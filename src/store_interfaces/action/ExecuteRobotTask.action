@@ -1,0 +1,19 @@
+# Goal (sent 1 step at a time from orchestrator to executor_node / mock_robot)
+# action_type: pick_place | reorient | move_to_buffer | restore_from_buffer | give_expired_box | scan_pose | home
+# grasp_width_mm / grasp_force_n: optional overrides (0.0 -> resolved by robot grasp_planner from product_category)
+string action_type
+float64[4] target_pose
+float64[4] dest_pose
+string product_category
+float32 grasp_width_mm
+float32 grasp_force_n
+---
+# Result
+bool success
+bool stopped_for_safety
+string error_code
+float64[4] final_pose
+---
+# Feedback
+string stage
+float32 progress

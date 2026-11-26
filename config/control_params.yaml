@@ -1,0 +1,31 @@
+# Motion, gripper, mock execution, and teleoperation control parameters
+
+motion:
+  default_velocity: 60.0
+  default_acceleration: 60.0
+  slow_velocity: 30.0
+  slow_acceleration: 30.0
+  dry_run: false
+
+gripper:
+  type: "rg2"
+  ip: "192.168.1.1"
+  port: 502
+  wait_after_move_sec: 0.6
+
+health:
+  heartbeat_period_sec: 1.0
+
+mock_robot:
+  step_delay_sec: 0.15
+  publish_feedback_steps: 4
+
+blackbox:
+  log_dir: "data/logs"
+  enabled: true
+
+teleop:
+  ema_alpha: 0.3
+  deadzone_px: 15.0
+  gripper_debounce_sec: 0.5
+  watchdog_timeout_sec: 0.5

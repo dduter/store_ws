@@ -1,0 +1,6 @@
+# Request admin key verification for remote teleoperation mode (Tier 3)
+string admin_key
+bool enable_remote
+---
+bool granted
+string reason

@@ -1,0 +1,26 @@
+# ROS 2 build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets & local env
+.env
+
+# Large binary weights & runtime data
+config/weights/*.pt
+data/snapshots/*
+!data/snapshots/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+
+# IDE / OS / Backup
+.vscode/
+.DS_Store
+*.bak

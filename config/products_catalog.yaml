@@ -1,0 +1,73 @@
+# Product catalog & robot grasping parameters (OnRobot RG2)
+# Orchestrator (LLM) passes product_category; executor_node (Robot) resolves
+# open_width_mm (approach/release), grasp_width_mm (target closing width),
+# grasp_force_n, and grasp_depth_offset_mm via grasp_planner.py.
+#
+# RG2 hardware note:
+#   grasp_width_mm MUST be smaller than the physical product width so the fingers
+#   contact the product and stop by force control (grip_detected=True).
+#   open_width_mm MUST be wider than the product width for clean approach/release.
+
+defaults:
+  grasp_width_mm: 20.0
+  open_width_mm: 90.0
+  open_margin_mm: 20.0
+  grasp_force_n: 18.0
+  grasp_depth_offset_mm: 15.0
+  reorient_mode: "flip_180_in_place"
+
+# Physical gripper limits (OnRobot RG2)
+rg2_limits:
+  min_width_mm: 0.0
+  max_width_mm: 110.0
+  min_force_n: 3.0
+  max_force_n: 40.0
+
+# 3 Core Product Categories + 2 Special Task Categories
+categories:
+  paper_box:
+    display_name: "종이상자"
+    grasp_width_mm: 20.0
+    open_width_mm: 95.0
+    grasp_force_n: 20.0
+    grasp_depth_offset_mm: 18.0
+    reorient_mode: "flip_180_in_place"
+  snack_bag:
+    display_name: "봉지과자"
+    grasp_width_mm: 15.0
+    open_width_mm: 95.0
+    grasp_force_n: 12.0
+    grasp_depth_offset_mm: 15.0
+    reorient_mode: "flip_180_in_place"
+  candy_chocolate:
+    display_name: "캔디·초콜릿류"
+    grasp_width_mm: 10.0
+    open_width_mm: 75.0
+    grasp_force_n: 15.0
+    grasp_depth_offset_mm: 12.0
+    reorient_mode: "flip_180_in_place"
+  # Special non-retail task categories
+  expired_box:
+    display_name: "폐기 박스 (직원 전달용)"
+    grasp_width_mm: 30.0
+    open_width_mm: 105.0
+    grasp_force_n: 30.0
+    grasp_depth_offset_mm: 20.0
+    reorient_mode: "none"
+  cigarette_mock:
+    display_name: "모형 담배 (후순위 원격)"
+    grasp_width_mm: 15.0
+    open_width_mm: 80.0
+    grasp_force_n: 15.0
+    grasp_depth_offset_mm: 15.0
+    reorient_mode: "none"
+
+# Optional per-product overrides (keyed by yolo_class after products are finalized).
+# Example:
+# products:
+#   choco_pie:
+#     category: "paper_box"
+#     grasp_width_mm: 25.0
+#     open_width_mm: 100.0
+#     grasp_force_n: 18.0
+products: {}

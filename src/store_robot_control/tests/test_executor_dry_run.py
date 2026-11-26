@@ -1,0 +1,314 @@
+import json
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+
+import pytest
+import rclpy
+from rclpy.action import CancelResponse, GoalResponse
+from rclpy.parameter import Parameter
+from std_msgs.msg import Bool
+from store_interfaces.action import ExecuteRobotTask
+
+from store_robot_control.hardware.dsr_interface import DoosanRobotInterface
+from store_robot_control.nodes.executor_node import ExecutorNode
+from conftest import make_test_config_dir
+
+
+TARGET = [350.0, 20.0, 40.0, 0.0]
+DESTINATION = [420.0, -200.0, 40.0, 0.0]
+
+
+class GoalHandle:
+    def __init__(self, action, target=TARGET, destination=DESTINATION):
+        self.request = ExecuteRobotTask.Goal(
+            action_type=action, product_category="paper_box",
+            target_pose=target, dest_pose=destination,
+        )
+        self.goal_id = SimpleNamespace(uuid=bytes(range(16)))
+        self.is_cancel_requested = False
+        self.is_active = True
+        self.status = None
+        self.feedback = []
+
+    def execute(self):
+        pass
+
+    def publish_feedback(self, feedback):
+        self.feedback.append(feedback.stage)
+
+    def succeed(self):
+        self.status = "succeeded"
+        self.is_active = False
+
+    def abort(self):
+        self.status = "aborted"
+        self.is_active = False
+
+    def canceled(self):
+        assert self.is_cancel_requested
+        self.status = "canceled"
+        self.is_active = False
+
+
+@pytest.fixture
+def node(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path))
+    rclpy.init()
+    executor = None
+    try:
+        cfg_dir = make_test_config_dir(tmp_path)
+        executor = ExecutorNode(parameter_overrides=[
+            Parameter("config_dir", value=str(cfg_dir)),
+            Parameter("dry_run", value=True),
+            Parameter("log_dir", value=str(tmp_path)),
+        ])
+        assert executor._dsr_node is None
+        assert executor._stop_client is None
+        yield executor
+    finally:
+        if executor is not None:
+            executor.destroy_node()
+        rclpy.try_shutdown()
+
+
+def run_goal(node, handle):
+    assert node.goal_callback(handle.request) == GoalResponse.ACCEPT
+    node.handle_accepted_callback(handle)
+    result = node.execute_callback(handle)
+    assert not node._busy
+    return result
+
+
+def test_doosan_simulated_pose_and_joints():
+    robot = DoosanRobotInterface(
+        "dsr01", "m0609", "tool", "tcp", [380, 0, 380, 0, 180, 0],
+        [0, 0, 90, 0, 90, 0], dry_run=True,
+    )
+    robot.move_linear_4d([350, 20, 250, -90], 60, 60)
+    assert robot.get_current_pose_6d() == [350, 20, 250, 0, 180, -90]
+    assert robot.get_current_joints()[5] == -90
+    robot.move_joint([1, 2, 3, 4, 5, 90], 60, 60)
+    assert robot.get_current_joints() == [1, 2, 3, 4, 5, 90]
+    assert robot.get_current_pose_4d() == [350, 20, 250, 90]
+
+
+@pytest.mark.parametrize("action", [
+    "home", "scan_pose", "pick_place", "move_to_buffer", "restore_from_buffer",
+    "give_expired_box", "reorient",
+])
+def test_all_actions(node, action, tmp_path):
+    poses = node._guard.poses
+    if action == "reorient":
+        node._robot.move_joint([0, 0, 90, 0, 90, -90], 60, 60)
+    destination = [0.0] * 4 if action == "give_expired_box" else DESTINATION
+    target = [*TARGET[:3], -90.0] if action == "reorient" else TARGET
+    handle = GoalHandle(action, target=target, destination=destination)
+    result = run_goal(node, handle)
+    assert result.success
+    assert result.error_code == "OK"
+    assert not result.stopped_for_safety
+    assert handle.status == "succeeded"
+    if action in {"home", "scan_pose"}:
+        pose = poses[f"{action}_cartesian"]
+        assert list(result.final_pose) == [*pose[:3], pose[5]]
+        assert handle.feedback == [action]
+    elif action == "reorient":
+        assert handle.feedback == [
+            "open_gripper", "approach", "descend", "grasp", "lift",
+            "flip_180", "place", "release", "retreat",
+        ]
+        assert list(result.final_pose) == [350, 20, 260, 90]
+        assert node._robot.get_current_joints()[5] == 90
+    else:
+        assert handle.feedback == [
+            "open_gripper", "approach", "descend", "grasp", "lift",
+            "transit", "place", "release", "retreat",
+        ]
+        pose = poses["employee_handover_pose"] if action == "give_expired_box" else destination
+        assert list(result.final_pose) == [*pose[:2], node._guard.safe_transit_z(pose[2]), pose[3]]
+    entry = json.loads((tmp_path / "robot_blackbox.jsonl").read_text())
+    assert entry["action_type"] == action
+    assert entry["error_code"] == "OK"
+
+
+@pytest.mark.parametrize(("action", "target", "code", "safety"), [
+    ("pick_place", [350.0, 20.0, 10.0, 0.0], "Z_MIN_VIOLATION", True),
+    ("reorient", TARGET, "J6_LIMIT_VIOLATION", True),
+    ("unknown", TARGET, "INVALID_ACTION", False),
+])
+def test_invalid_tasks(node, action, target, code, safety):
+    handle = GoalHandle(action, target)
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.error_code == code
+    assert result.stopped_for_safety == safety
+    assert handle.status == "aborted"
+    assert handle.feedback == []
+
+
+@pytest.mark.parametrize("action", ["pick_place", "reorient"])
+def test_grasp_failure_retreats_before_opening(node, action):
+    if action == "reorient":
+        node._robot.move_joint([0, 0, 90, 0, 90, -90], 60, 60)
+    node._gripper.simulate_grip_fail = True
+    rz = -90.0 if action == "reorient" else 0.0
+    handle = GoalHandle(action, target=[*TARGET[:3], rz])
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.stopped_for_safety
+    assert result.error_code == "GRASP_FAIL"
+    assert list(result.final_pose) == [350, 20, 260, rz]
+    assert node._gripper.get_width_mm() == 95
+    assert handle.feedback[-2:] == ["grasp_fail_retreat", "grasp_fail_release"]
+
+
+@pytest.mark.parametrize("emergency", [True, False])
+def test_stop_during_blocking_motion(node, monkeypatch, emergency):
+    in_motion, release_motion, quick_stop_sent = Event(), Event(), Event()
+    move = node._robot.move_linear_4d
+
+    def blocking_move(*args, **kwargs):
+        in_motion.set()
+        assert release_motion.wait(3)
+        return move(*args, **kwargs)
+
+    stops = []
+
+    def call_async(request):
+        from concurrent.futures import Future
+
+        stops.append(request.stop_mode)
+        quick_stop_sent.set()
+        future = Future()
+        future.set_result(SimpleNamespace(success=True))
+        return future
+
+    monkeypatch.setattr(node._robot, "move_linear_4d", blocking_move)
+    node._stop_client = SimpleNamespace(call_async=call_async)
+    node._stop_request = SimpleNamespace
+    handle = GoalHandle("pick_place")
+    node.handle_accepted_callback(handle)
+    with ThreadPoolExecutor() as pool:
+        result_future = pool.submit(node.execute_callback, handle)
+        try:
+            assert in_motion.wait(3)
+            assert node.goal_callback(handle.request) == GoalResponse.REJECT
+            if emergency:
+                node._on_emergency_stop(Bool(data=True))
+                assert node._guard.is_emergency_stopped()
+                node._on_emergency_stop(Bool(data=False))
+            else:
+                assert node.cancel_callback(handle) == CancelResponse.ACCEPT
+                handle.is_cancel_requested = True
+            assert quick_stop_sent.is_set()
+            assert stops == [1]
+            assert not result_future.done()
+        finally:
+            release_motion.set()
+        result = result_future.result(timeout=3)
+    assert not result.success
+    assert result.stopped_for_safety == emergency
+    assert result.error_code == "CANCELED"
+    assert handle.feedback == ["open_gripper", "approach"]
+    assert handle.status == ("aborted" if emergency else "canceled")
+    assert not node._busy
+
+
+def test_depth_offset_clamps_to_safety_floor(node, monkeypatch):
+    heights = []
+    move = node._robot.move_linear_4d
+
+    def record_height(pose, *args, **kwargs):
+        heights.append(pose[2])
+        return move(pose, *args, **kwargs)
+
+    monkeypatch.setattr(node._robot, "move_linear_4d", record_height)
+    node._apply_depth = True
+    result = run_goal(node, GoalHandle("pick_place", target=[350.0, 20.0, 20.0, 0.0]))
+    assert result.success
+    assert min(heights) == node._guard.z_min_mm
+
+
+def test_health_reports_emergency_and_dry_run(node, monkeypatch):
+    messages = []
+    monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))
+    node._publish_health()
+    node._on_emergency_stop(Bool(data=True))
+    node._publish_health()
+    assert [message.state for message in messages] == ["OK", "ERROR"]
+    assert all(message.node_name == "executor_node" for message in messages)
+    assert all("dry_run=true" in message.message for message in messages)
+
+
+def test_quick_stop_failure_latches_fault_and_blocks_goals(node):
+    from concurrent.futures import Future
+
+    failed = Future()
+    failed.set_result(SimpleNamespace(success=False))
+    node._stop_client = SimpleNamespace(call_async=lambda _req: failed)
+    node._stop_request = SimpleNamespace
+    messages = []
+    node._health = SimpleNamespace(publish=messages.append)
+
+    node.quick_stop()
+    assert node._stop_fault
+    assert node.goal_callback(GoalHandle("home").request) == GoalResponse.REJECT
+    node._publish_health()
+    assert messages[-1].state == "ERROR"
+    assert "급정지 오류" in messages[-1].message
+
+
+def test_linear_move_rejects_j6_over_limit(node):
+    node._robot.move_joint([0, 0, 90, 0, 90, 120], 60, 60)
+    handle = GoalHandle("pick_place", target=[350.0, 20.0, 40.0, 170.0])
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.stopped_for_safety
+    assert result.error_code == "J6_LIMIT_VIOLATION"
+
+
+def test_reorient_from_home_j6_zero_succeeds_with_rotated_target(node):
+    handle = GoalHandle("reorient", target=[350.0, 20.0, 40.0, -90.0])
+    result = run_goal(node, handle)
+    assert result.success
+    assert result.error_code == "OK"
+    assert node._robot.get_current_joints()[5] == 90.0
+
+
+def test_ensure_tool_and_tcp_skips_when_matching_and_switches_mode_when_needed():
+    robot = DoosanRobotInterface(
+        "dsr01", "m0609", "Tool_Weight", "GripperDA_v1", [380, 0, 380, 0, 180, 0],
+        [0, 0, 90, 0, 90, 0], dry_run=True,
+    )
+    calls = []
+    robot._api = SimpleNamespace(
+        get_tool=lambda: "Tool_Weight",
+        get_tcp=lambda: "GripperDA_v1",
+        set_tool=lambda name: calls.append(("set_tool", name)) or 0,
+        set_tcp=lambda name: calls.append(("set_tcp", name)) or 0,
+    )
+    robot._ensure_tool_and_tcp("Tool_Weight", "GripperDA_v1")
+    assert calls == []
+
+    robot._api = SimpleNamespace(
+        get_tool=lambda: "Old_Tool",
+        get_tcp=lambda: "GripperDA_v1",
+        get_robot_mode=lambda: 1,
+        set_robot_mode=lambda mode: calls.append(("set_mode", mode)) or 0,
+        set_tool=lambda name: calls.append(("set_tool", name)) or 0,
+        set_tcp=lambda name: calls.append(("set_tcp", name)) or 0,
+    )
+    robot._ensure_tool_and_tcp("Tool_Weight", "GripperDA_v1")
+    assert calls == [("set_mode", 0), ("set_tool", "Tool_Weight"), ("set_mode", 1)]
+
+
+def test_zyz_gimbal_lock_at_ry_180_does_not_false_trigger_j6(node):
+    # 실물 M0609 home 자세의 ZYZ 짐벌락 표현: rx≈140.9, ry≈180.0, rz≈140.9 (실제 yaw≈0°)
+    node._robot.set_simulated_reference_pose([367.2, 3.7, 182.6, 140.9, 179.98, 140.9])
+    handle = GoalHandle("pick_place", target=[350.0, 20.0, 40.0, 0.0])
+    result = run_goal(node, handle)
+    assert result.success
+    assert result.error_code == "OK"
+    assert abs(node._robot.get_current_joints()[5]) < 1.0
