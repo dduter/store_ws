@@ -170,3 +170,15 @@
 
 ### Verification & Review
 - `.env`, `*.bak`, `build/`, `install/`, `log/` 미포함 확인 후 푸시 완료.
+
+## 2026-11-26 21:39 — `ws_dsr` 호환 `config_dir` 탐색 보강 및 `README.md` 업데이트
+
+### Goal / Background
+- `/home/yongsoo/ws_cobot_pjt/ws_dsr`로 이전한 환경과 GitHub(`dduter/store_ws`) 레포를 동기화하고, `ws_dsr` 내부 선택 빌드 및 `~/ws_cobot_pjt/ws_dsr/config` 자동 탐색을 지원함.
+
+### Responsible Agent(s)
+- **Antigravity**: `mock_robot.py` 및 `README.md` 업데이트, `dduter/store_ws` 커밋 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`: `find_config_dir()`에 `~/ws_cobot_pjt/ws_dsr/config` 탐색 추가.
+- `/home/yongsoo/store_ws/README.md`: `ws_dsr` 내부 `--packages-select` 빌드 방법 추가.

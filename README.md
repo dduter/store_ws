@@ -11,8 +11,15 @@
   - `nodes/`: `mock_robot`, `executor_node`, `teach_zones`
 - `src/store_bringup/`: 통합 런치 (`mock_robot.launch.py`, `executor.launch.py`, `store_bot.launch.py`)
 
-## Build & Test (Underlay: `ws_dsr` + Overlay)
+## Build & Test
 ```bash
+# Option A) ws_dsr 내부에서 팀 패키지만 선택 빌드 (권장)
+cd ~/ws_cobot_pjt/ws_dsr
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select store_interfaces store_robot_control store_bringup
+source ~/ws_cobot_pjt/ws_dsr/install/setup.bash
+
+# Option B) 별도 Overlay 워크스페이스에서 빌드
 source /opt/ros/jazzy/setup.bash
 source ~/ws_cobot_pjt/ws_dsr/install/setup.bash
 colcon build --symlink-install
