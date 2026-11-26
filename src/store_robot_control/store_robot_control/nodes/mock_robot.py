@@ -26,12 +26,7 @@ TRANSFER_ACTIONS = {"pick_place", "move_to_buffer", "restore_from_buffer", "give
 
 
 def find_config_dir():
-    for start in (
-        Path.cwd(),
-        Path(__file__).resolve().parent,
-        Path.home() / "ws_cobot_pjt" / "ws_dsr",
-        Path.home() / "store_ws",
-    ):
+    for start in (Path.cwd(), Path(__file__).resolve().parent, Path.home() / "store_ws"):
         for parent in (start, *start.parents):
             candidate = parent / "config"
             if (candidate / "workspace_zones.yaml").is_file():

@@ -182,3 +182,15 @@
 ### Detailed Changes
 - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`: `find_config_dir()`에 `~/ws_cobot_pjt/ws_dsr/config` 탐색 추가.
 - `/home/yongsoo/store_ws/README.md`: `ws_dsr` 내부 `--packages-select` 빌드 방법 추가.
+
+## 2026-11-26 21:44 — `ws_dsr` 분리 원복 및 `~/store_ws` 단일 Overlay 관리 확정
+
+### Goal / Background
+- `~/ws_cobot_pjt/ws_dsr`와 `~/store_ws` 양쪽에 파일이 분산되는 혼선을 없애기 위해 `ws_dsr`에서 이전했던 `store_*` 패키지·설정·빌드 산출물을 모두 제거하고, `~/ws_cobot_pjt/ws_dsr`(Underlay) + `~/store_ws`(Overlay / GitHub 단일 관리) 분리 구조로 확정함.
+
+### Responsible Agent(s)
+- **Antigravity**: `ws_dsr` 내 추가 파일 일괄 제거, `store_ws`의 `find_config_dir()` 및 `README.md` 정리, 재빌드·`pytest`·패키지 분리 검증 및 GitHub 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/ws_cobot_pjt/ws_dsr/`: 이전했던 `config/`, `data/`, `scripts/`, `src/store_*`, `build/store_*`, `install/store_*`, 문서 파일 제거(기존 `doosan-robot2`/`onrobot-ros2`/`rg2`/`rokey1` 원본 보존).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`, `README.md`: `store_ws` 단일 Overlay 구조로 정리.
