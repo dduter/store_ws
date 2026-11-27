@@ -1,4 +1,5 @@
 from math import acos, cos, degrees, dist, isfinite, radians, sin
+from time import monotonic
 
 
 class MotionUnreachableError(RuntimeError):
@@ -30,7 +31,28 @@ def top_down_effective_rz(pose_6d) -> float | None:
     return (pose_6d[5] - pose_6d[3] + 180.0) % 360.0 - 180.0
 
 
+def wait_for_dsr_services(api, timeout_sec: float = 30.0):
+    # Doosan DSR_ROBOT2의 get_tool/get_tcp는 wait_for_service 없이 호출되어
+    # dsr_controller2 활성화 직전에 호출되면 영구 대기할 수 있으므로 먼저 준비를 기다립니다.
+    clients = [
+        (name, getattr(api, name))
+        for name in ("_ros2_get_current_tool", "_ros2_get_current_tcp", "_ros2_movel")
+        if hasattr(api, name) and hasattr(getattr(api, name), "wait_for_service")
+    ]
+    if not clients:
+        return
+    deadline = monotonic() + max(0.0, float(timeout_sec))
+    for name, client in clients:
+        while not client.wait_for_service(timeout_sec=min(1.0, max(0.05, deadline - monotonic()))):
+            if monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Doosan 제어기 서비스({name}) 대기 시간({timeout_sec:.0f}s) 초과 — roboton 활성화 완료를 확인하세요."
+                )
+
+
 def ensure_tool_and_tcp(api, tool_name: str, tcp_name: str):
+    wait_for_dsr_services(api)
+
     def check(result, operation):
         if result != 0:
             raise RuntimeError(f"Doosan {operation} 명령 실패 (반환값 {result})")

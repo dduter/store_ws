@@ -285,3 +285,21 @@
 - 작업대 최종 배치 확정 후 `teach_zones`로 최종 `scan_pose`, `zones.buffer_slots`, `employee_handover_pose` 실측 업데이트 필요.
 - 실물 M0609 + RG2에서 빈 공간/실제 상품으로 `two_stage_flip` 실행 시 `standing_offset_z_mm(20 mm)`, `reapproach_offset_mm(35 mm)`, `flip_lift_delta_mm(90 mm)` 실물 튜닝 권장.
 - 원격 텔레옵 웹캠/MediaPipe ROS 노드(`remote_node`) 구현 시 `core/teleop_math.py`의 `TeleopPipeline`을 바로 연결하여 사용.
+
+## 2026-11-27 11:36 — `DSR_ROBOT2` 서비스 미준비 시 영구 대기 버그 수정 및 `executor_node` 시작/작업 로그 추가
+
+### Goal / Background
+- 실물 `roboton` 실행 직후 `dsr_controller2` 활성화(11:33:25)보다 1초 먼저 `executor_node`를 실행(11:33:24)했을 때, 두산 벤더 라이브러리(`DSR_ROBOT2.get_tool()`/`get_tcp()`)가 `wait_for_service()` 없이 즉시 `call_async` 후 `spin_until_future_complete()`를 호출해 영구 대기(행)되는 현상을 발견·해결함.
+- `executor_node` 실행 시 초기화 완료 여부 및 `dry_run`/속도/작업 시작·종료가 터미널에 명확히 보이도록 로그를 보강함.
+
+### Responsible Agent(s)
+- **Antigravity**: 실물 프로세스·ROS 그래프·`DSR_ROBOT2.py` 원인 분석, `wait_for_dsr_services()` 및 `executor_node` 로그 추가, 단위 테스트 추가·재빌드·푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/hardware/dsr_interface.py`: `wait_for_dsr_services()` 추가 및 `ensure_tool_and_tcp()` 선두에서 `_ros2_get_current_tool`, `_ros2_get_current_tcp`, `_ros2_movel` 서비스 준비 대기(최대 30초, 초과 시 명시적 예외 발생).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: 초기화 완료 시 `dry_run`/속도/파지체크/깊이오프셋 설정 로그와 각 액션 작업 시작·종료 로그 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/test_executor_dry_run.py`: `test_wait_for_dsr_services_waits_and_times_out` 추가.
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.31s`).
+- `pytest -q src/store_robot_control/tests` → **109 passed**.

@@ -341,6 +341,22 @@ def test_ensure_tool_and_tcp_skips_when_matching_and_switches_mode_when_needed()
     assert calls == [("set_mode", 0), ("set_tool", "Tool_Weight"), ("set_mode", 1)]
 
 
+def test_wait_for_dsr_services_waits_and_times_out():
+    from store_robot_control.hardware.dsr_interface import wait_for_dsr_services
+
+    attempts = iter([False, True])
+    api = SimpleNamespace(
+        _ros2_get_current_tool=SimpleNamespace(wait_for_service=lambda timeout_sec: next(attempts)),
+    )
+    wait_for_dsr_services(api, timeout_sec=5.0)
+
+    never_ready = SimpleNamespace(
+        _ros2_get_current_tool=SimpleNamespace(wait_for_service=lambda timeout_sec: False),
+    )
+    with pytest.raises(RuntimeError, match="대기 시간"):
+        wait_for_dsr_services(never_ready, timeout_sec=0.5)
+
+
 def test_zyz_gimbal_lock_at_ry_180_does_not_false_trigger_j6(node):
     # 실물 M0609 home 자세의 ZYZ 짐벌락 표현: rx≈140.9, ry≈180.0, rz≈140.9 (실제 yaw≈0°)
     node._robot.set_simulated_reference_pose([367.2, 3.7, 182.6, 140.9, 179.98, 140.9])

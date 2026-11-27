@@ -116,6 +116,10 @@ class ExecutorNode(Node):
             settings["health"]["heartbeat_period_sec"], self._publish_health,
             callback_group=self._callback_group,
         )
+        self.get_logger().info(
+            f"executor_node 준비 완료 (dry_run={self._dry_run}, vel={self._velocity}, "
+            f"acc={self._acceleration}, check_grip={self._check_grip}, apply_depth={self._apply_depth})"
+        )
 
     def destroy_node(self):
         try:
@@ -409,6 +413,10 @@ class ExecutorNode(Node):
             "target_pose": list(request.target_pose), "dest_pose": list(request.dest_pose),
             "grasp_width_mm": request.grasp_width_mm, "grasp_force_n": request.grasp_force_n,
         }
+        self.get_logger().info(
+            f"작업 시작: action={action}, category={request.product_category}, "
+            f"target={goal['target_pose']}, dest={goal['dest_pose']}"
+        )
         grasp = None
         code, stopped = "OK", False
         with self._state:
@@ -459,6 +467,9 @@ class ExecutorNode(Node):
         code, stopped = self._finish_goal(handle, code, stopped)
         result = ExecuteRobotTask.Result(
             success=code == "OK", stopped_for_safety=stopped, error_code=code, final_pose=final_pose,
+        )
+        self.get_logger().info(
+            f"작업 종료: action={action}, success={result.success}, error_code={code}, final_pose={final_pose}"
         )
         if self._blackbox is not None:
             try:
