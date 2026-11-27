@@ -134,7 +134,7 @@ def plan_two_stage_flip(target_pose, safety_guard: SafetyGuard, flip_lift_delta_
 def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
                      safety_guard: SafetyGuard, tilt_deg: float = 40.0,
                      flip_lift_delta_mm: float = 90.0, max_j5_abs_deg: float = 125.0,
-                     release_clearance_mm: float = 55.0, tool_length_mm: float = 240.0):
+                     release_clearance_mm: float = 55.0, tool_length_mm: float = 361.0):
     guard = safety_guard
     check = guard.validate_pose(target_pose)
     if not check.ok:
@@ -204,10 +204,10 @@ def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
 
 def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
                          safety_guard: SafetyGuard, edge_offset_mm: float = 35.0,
-                         pivot_lift_mm: float = 70.0, pivot_tilt_deg: float = 60.0,
+                         pivot_lift_mm: float = 70.0, pivot_tilt_deg: float = 50.0,
                          drag_forward_mm: float = 55.0, release_z_offset_mm: float = 25.0,
                          min_j5_abs_deg: float = 20.0, max_j5_abs_deg: float = 125.0,
-                         tool_length_mm: float = 240.0):
+                         tool_length_mm: float = 361.0):
     guard = safety_guard
     check = guard.validate_pose(target_pose)
     if not check.ok:

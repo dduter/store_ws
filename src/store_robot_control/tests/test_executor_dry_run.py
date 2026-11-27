@@ -599,18 +599,18 @@ def test_edge_pivot_uses_measured_tcp_and_restores_only_live_j5(node, monkeypatc
     result = run_goal(node, GoalHandle("reorient", target=[332.5, 0.0, 40.0, 0.0]))
 
     assert result.success
-    assert fk_samples == [60.0, 30.0, 60.0, 90.0]
+    assert fk_samples == [65.0, 40.0, 65.0, 90.0]
     assert tilted_moves == [
         ([565.0, 8.0, 65.0, *measured[3:]], 20.0, 30.0),
         ([565.0, 8.0, 225.0, *measured[3:]], 20.0, 30.0),
     ]
     assert joint_commands == [
-        ([0.0, 0.0, 90.0, 0.0, 30.0, 0.0], 20.0, 30.0),
+        ([0.0, 0.0, 90.0, 0.0, 40.0, 0.0], 20.0, 30.0),
         ([12.0, 0.0, 90.0, 0.0, 90.0, 0.0], 20.0, 30.0),
     ]
 
 
-@pytest.mark.parametrize("unsafe_j5", [30.0, 79.0, None])
+@pytest.mark.parametrize("unsafe_j5", [30.0, 54.0, None])
 def test_edge_pivot_blocks_unsafe_live_tilt(node, monkeypatch, unsafe_j5):
     robot = node._robot
     move_linear = robot.move_linear_4d
@@ -636,9 +636,32 @@ def test_edge_pivot_blocks_unsafe_live_tilt(node, monkeypatch, unsafe_j5):
     assert handle.feedback[-1] == "pivot_lift"
 
 
+def test_edge_pivot_caps_live_j5_at_77_deg_safely(node, monkeypatch):
+    # 실물 [312.57, 0, 102.1] 측정값 J5=+77.76°에서 특이점 여유(|J5|>=20°)를 지키며 50° 완주
+    robot = node._robot
+    move_linear = robot.move_linear_4d
+    move_joint = robot.move_joint
+    j5_targets = []
+
+    def linear(pose, *args, **kwargs):
+        move_linear(pose, *args, **kwargs)
+        if abs(pose[2] - 102.0) < 1.0:
+            robot._joints[4] = 77.76
+
+    def joint(joints, vel, acc):
+        j5_targets.append(joints[4])
+        move_joint(joints, vel, acc)
+
+    monkeypatch.setattr(robot, "move_linear_4d", linear)
+    monkeypatch.setattr(robot, "move_joint", joint)
+    result = run_goal(node, GoalHandle("reorient", target=[330.0, 0.0, 50.0, 0.0]))
+    assert result.success
+    assert j5_targets == [pytest.approx(27.76), pytest.approx(77.76)]
+
+
 def test_edge_pivot_falls_back_to_gentle_flip_at_outer_display_edge(node):
-    # [500, 0, 40, 0]은 edge_pivot_flip 드래그가 x_max(720)를 넘지만 gentle_flip은 안전하게 통과
-    handle = GoalHandle("reorient", target=[500.0, 0.0, 40.0, 0.0])
+    # [450, 0, 40, 0]은 edge_pivot_flip 드래그가 x_max(720)를 넘지만 gentle_flip은 안전하게 통과
+    handle = GoalHandle("reorient", target=[450.0, 0.0, 40.0, 0.0])
     result = run_goal(node, handle)
     assert result.success
     assert "gentle_tilt_j5" in handle.feedback

@@ -419,3 +419,25 @@
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.07s`).
 - `pytest -q src/store_robot_control/tests` → **174 passed in 2.08s**.
 - `executor.launch.py dry_run:=true` + `ros2 run store_robot_control robot_demo --suite all --yes` (CycloneDDS) → **10 / 10 시나리오 전부 통과**.
+
+## 2026-11-27 14:26 — 실물 M0609 `J5`/`fkin` 실측 반영 (`361 mm`, `50°` 자동 특이점 클램핑) 및 LLM 싱크 `zones.display_tiers` 추가
+
+### Goal / Background
+- 실물 M0609에서 `edge_pivot_flip` (`[330, 0, 50]`) 테스트 시 `pivot_lift`(`[312.57, 0, 102.10]`) 직후 `OUT_OF_REACH`로 안전 중단된 원인을 실물 `ikin`/`fkin`으로 조회한 결과:
+  1. `pivot_lift`에서 실물 `J5 = +77.76°`로 낮아져 `60°` 감산 시 `+17.76°`(< 특이점 하한 `20°`)가 되어 특이점 가드가 정상 차단함.
+  2. M0609 `J5` 손목 중심→RG2 TCP 실제 회전 반경이 `240 mm`가 아니라 `361 mm`(손목 링크 `121 mm` + RG2 `240 mm`)임을 `fkin`으로 실측 확인함.
+- LLM 파트 싱크 요청에 따라 `config/workspace_zones.yaml`에 3단 진열대 키 구조(`zones.display_tiers.tier_1/2/3`, 각 3슬롯, 총 9슬롯)를 사전 추가함.
+
+### Responsible Agent(s)
+- **Antigravity**: 실물 M0609 `ikin`/`fkin` 정밀 계측, `tool_length_mm=361.0` 및 `pivot_tilt_deg=50.0`·실시간 특이점 여유 클램핑(`min(tilt, abs(j5) - 20.0)`) 적용, `zones.display_tiers` 추가, 재빌드·175건 테스트 검증 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/workspace_zones.yaml`: `zones.display_tiers` (`tier_1`, `tier_2`, `tier_3` 각 3슬롯, `[x, y, z, rz]` 임시 좌표 — 기존 실측 `z_min_mm`, `home_*`, `scan_pose_*`, `buffer_slots` 보존).
+- `/home/yongsoo/store_ws/config/control_params.yaml`: `reorient.pivot_tilt_deg`를 `60.0` → `50.0`으로 조정.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: 실측 `J5→TCP` 반경 `tool_length_mm=361.0` 및 기본 `pivot_tilt_deg=50.0` 적용.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`, `mock_robot.py`: `pivot_tilt_j5` 직전 실물 `J5` 기준으로 `effective_tilt = min(tilt, abs(j5) - 20.0)` 자동 클램핑(`≥35°` 유지, `|J5|≥20°` 특이점 보호).
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/`: `test_edge_pivot_caps_live_j5_at_77_deg_safely` 추가 및 기대값 갱신(총 175건).
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.31s`).
+- `pytest -q src/store_robot_control/tests` → **175 passed**.

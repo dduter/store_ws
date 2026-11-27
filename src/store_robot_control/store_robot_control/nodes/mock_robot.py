@@ -176,7 +176,7 @@ class MockRobot(Node):
                         target, guard.poses["home_joint_deg"][4], self._j6, guard,
                         edge_offset_mm=self._reorient.get("edge_offset_mm", 35.0),
                         pivot_lift_mm=self._reorient.get("pivot_lift_mm", 70.0),
-                        pivot_tilt_deg=self._reorient.get("pivot_tilt_deg", 60.0),
+                        pivot_tilt_deg=self._reorient.get("pivot_tilt_deg", 50.0),
                         drag_forward_mm=self._reorient.get("drag_forward_mm", 55.0),
                         release_z_offset_mm=self._reorient.get("release_z_offset_mm", 25.0),
                     )
