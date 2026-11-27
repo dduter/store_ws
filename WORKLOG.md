@@ -441,3 +441,20 @@
 ### Verification & Review
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.31s`).
 - `pytest -q src/store_robot_control/tests` → **175 passed**.
+
+## 2026-11-27 14:33 — 실물 `drag_over` `J5` 특이점 실측 보정 (`pivot_tilt_deg: 35.0°`)
+
+### Goal / Background
+- 실물 M0609에서 `edge_pivot_flip`(`50°`) 테스트 시 `pivot_tilt_j5`까지는 정상 실행됐으나 `drag_over`(`Z: 231→57 mm`) 하강 중 `J2+J3`가 `+30°` 증가하면서 `J5`가 `+27.8°→+1.1°` 손목 특이점에 진입해 `ikin`이 `J6=+178.8°`로 뒤집히는 현상을 `predict_linear_j6`가 사전에 정확히 차단함(`J6_LIMIT_VIOLATION`).
+- 실물 `ikin` 전수 조회 결과 `pivot_tilt_deg=35.0°`에서는 `Z=65 mm` 바닥 근처까지 내려와도 `J5=+25.7°`, `J4=+1.3°`, `J6=-2.0°`로 전 구간 특이점 없이 안전함을 확인하고 기본값을 `35.0°`로 확정함.
+
+### Responsible Agent(s)
+- **Antigravity**: 실물 M0609 `ikin` 드래그 하강 전수 계측, `pivot_tilt_deg` `50.0°→35.0°` 보정, 재빌드·175건 테스트 검증 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/control_params.yaml`, `reorient_motion.py`, `executor_node.py`, `mock_robot.py`: `pivot_tilt_deg` 기본값 `35.0°` 및 `effective_tilt` 하한 `20.0°` 적용.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/`: `test_reorient_motion.py`, `test_executor_dry_run.py` 기대값 갱신.
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.32s`).
+- `pytest -q src/store_robot_control/tests` → **175 passed**.

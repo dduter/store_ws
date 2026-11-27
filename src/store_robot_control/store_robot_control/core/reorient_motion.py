@@ -204,7 +204,7 @@ def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
 
 def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
                          safety_guard: SafetyGuard, edge_offset_mm: float = 35.0,
-                         pivot_lift_mm: float = 70.0, pivot_tilt_deg: float = 50.0,
+                         pivot_lift_mm: float = 70.0, pivot_tilt_deg: float = 35.0,
                          drag_forward_mm: float = 55.0, release_z_offset_mm: float = 25.0,
                          min_j5_abs_deg: float = 20.0, max_j5_abs_deg: float = 125.0,
                          tool_length_mm: float = 361.0):

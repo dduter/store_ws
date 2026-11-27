@@ -151,7 +151,7 @@ def test_gentle_flip_rejects_invalid_plan(guard, x, z, j5, j6, kwargs, code):
     assert exc.value.error_code == code
 
 
-@pytest.mark.parametrize(("j5", "delta"), [(90.0, -50.0), (-90.0, 50.0)])
+@pytest.mark.parametrize(("j5", "delta"), [(90.0, -35.0), (-90.0, 35.0)])
 def test_edge_pivot_flip(guard, j5, delta):
     points = plan_edge_pivot_flip([332.5, 0.0, 40.0, 25.0], j5, 30.0, guard)
     assert [point.stage for point in points] == [
@@ -162,17 +162,17 @@ def test_edge_pivot_flip(guard, j5, delta):
     assert points[1].pose == points[2].pose == [297.5, 0.0, 40.0, 25.0]
     assert points[2].action == "grasp" and points[2].check_grip
     assert points[3].pose == points[8].pose == [315.0, 0.0, 110.0, 25.0]
-    assert points[4].pose == pytest.approx([591.541982, 0.0, 238.953359, 25.0], abs=1e-3)
+    assert points[4].pose == pytest.approx([522.061630, 0.0, 175.286122, 25.0], abs=1e-3)
     assert points[4].action == points[8].action == "move_joint_j5"
     assert (points[4].j5_delta_deg, points[8].j5_delta_deg) == (delta, -delta)
-    assert points[5].pose == points[6].pose == pytest.approx([646.541982, 0.0, 65.0, 25.0], abs=1e-3)
+    assert points[5].pose == points[6].pose == pytest.approx([577.061630, 0.0, 65.0, 25.0], abs=1e-3)
     assert points[6].action == "release"
-    assert points[7].pose == pytest.approx([646.541982, 0.0, 238.953359, 25.0], abs=1e-3)
+    assert points[7].pose == pytest.approx([577.061630, 0.0, 175.286122, 25.0], abs=1e-3)
     assert points[9].pose == [332.5, 0.0, 260.0, 25.0]
     assert all(point.j6_deg == 30.0 for point in points)
 
 
-@pytest.mark.parametrize("j5", [69.0, -69.0, 30.0, -30.0, 126.0])
+@pytest.mark.parametrize("j5", [54.0, -54.0, 30.0, -30.0, 126.0])
 def test_edge_pivot_flip_rejects_unsafe_j5(guard, j5):
     with pytest.raises(ReorientPlanningError) as exc:
         plan_edge_pivot_flip([332.5, 0.0, 40.0, 0.0], j5, 0.0, guard)

@@ -66,7 +66,7 @@ class ExecutorNode(Node):
         self._release_clearance_mm = float(reorient.get("release_clearance_mm", 55.0))
         self._edge_offset_mm = float(reorient.get("edge_offset_mm", 35.0))
         self._pivot_lift_mm = float(reorient.get("pivot_lift_mm", 70.0))
-        self._pivot_tilt_deg = float(reorient.get("pivot_tilt_deg", 50.0))
+        self._pivot_tilt_deg = float(reorient.get("pivot_tilt_deg", 35.0))
         self._drag_forward_mm = float(reorient.get("drag_forward_mm", 55.0))
         self._release_z_offset_mm = float(reorient.get("release_z_offset_mm", 25.0))
         speeds = (self._velocity, self._acceleration, self._slow_velocity, self._slow_acceleration)
@@ -482,7 +482,7 @@ class ExecutorNode(Node):
         joints = list(self._robot.get_current_joints())
         j5 = joints[4]
         effective_tilt = min(tilt, abs(j5) - 20.0)
-        if effective_tilt < 35.0 or abs(j5) > 125.0:
+        if effective_tilt < 20.0 or abs(j5) > 125.0:
             raise ReorientPlanningError("OUT_OF_REACH", "J5 특이점 또는 안전 각도 범위를 벗어납니다.")
         delta_j5 = -effective_tilt if j5 >= 0.0 else effective_tilt
         tilted_j5 = j5 + delta_j5
