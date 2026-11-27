@@ -11,6 +11,11 @@ motion:
   # Vision B sends Z_surface (mm); Robot subtracts category grasp_depth_offset_mm and clamps to z_min_mm
   apply_grasp_depth_offset: true
 
+reorient:
+  gentle_tilt_deg: 40.0
+  flip_lift_delta_mm: 90.0
+  release_clearance_mm: 55.0
+
 gripper:
   type: "rg2"
   ip: "192.168.1.1"

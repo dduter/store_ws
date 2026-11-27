@@ -3,7 +3,7 @@ import ast
 
 import pytest
 
-from store_robot_control.core.reorient_motion import ReorientPlanningError, plan_reorient, plan_two_stage_flip
+from store_robot_control.core.reorient_motion import ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip
 from store_robot_control.core.safety_guard import SafetyGuard
 from conftest import TEST_WORKSPACE
 
@@ -108,3 +108,42 @@ def test_core_has_no_ros_imports():
                 assert all(alias.name.split(".")[0] not in forbidden for alias in node.names), path
             elif isinstance(node, ast.ImportFrom) and node.module:
                 assert node.module.split(".")[0] not in forbidden, path
+
+
+@pytest.mark.parametrize("j5, delta", [(90.0, -40.0), (-90.0, 40.0), (0.0, -40.0)])
+def test_gentle_flip(guard, j5, delta):
+    points = plan_gentle_flip([350.0, 20.0, 200.0, 25.0], j5, 30.0, guard)
+    assert [point.stage for point in points] == [
+        "approach", "descend", "grasp", "lift", "gentle_tilt_j5",
+        "place_flip", "release_flip", "lift_after_flip", "restore_j5", "retreat",
+    ]
+    assert points[0].pose[2] == 280
+    assert points[1].pose[2] == points[2].pose[2] == 200
+    assert points[3].pose[2] == 290
+    assert points[4].pose[2] > 290
+    assert points[5].pose[2] == points[6].pose[2] == 255
+    assert points[7].pose[2] == points[4].pose[2]
+    assert points[8].pose[2] == 290
+    assert points[9].pose[2] == 280
+    assert points[2].check_grip
+    assert points[4].action == points[8].action == "move_joint_j5"
+    assert points[4].j5_delta_deg == -points[8].j5_delta_deg == delta
+    assert points[6].action == "release"
+    assert all(point.j6_deg == 30 and point.orientation_zyz is None for point in points)
+
+
+@pytest.mark.parametrize("x,z,j5,j6,kwargs,code", [
+    (350, 10, 90, 0, {}, "Z_MIN_VIOLATION"),
+    (350, 320, 90, 0, {}, "OUT_OF_REACH"),
+    (350, 260, 90, 0, {}, "OUT_OF_REACH"),   # lift_z(350) + J5 원호 상승(~56mm) > z_max(400)
+    (600, 40, 90, 0, {}, "OUT_OF_REACH"),    # x(600) + J5 원호 전방(~154mm) > x_max(720)
+    (350, 40, 126, 0, {}, "OUT_OF_REACH"),
+    (350, 40, 90, 151, {}, "J6_LIMIT_VIOLATION"),
+    (350, 40, float("nan"), 0, {}, "INVALID_POSE"),
+    (350, 40, 90, 0, {"tilt_deg": 56}, "INVALID_POSE"),
+    (350, 40, 90, 0, {"flip_lift_delta_mm": 0}, "INVALID_POSE"),
+])
+def test_gentle_flip_rejects_invalid_plan(guard, x, z, j5, j6, kwargs, code):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_gentle_flip([x, 20, z, 0], j5, j6, guard, **kwargs)
+    assert exc.value.error_code == code

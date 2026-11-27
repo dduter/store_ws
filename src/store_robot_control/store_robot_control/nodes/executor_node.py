@@ -14,7 +14,9 @@ from store_interfaces.msg import NodeHealth
 
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
-from ..core.reorient_motion import ReorientPlanningError, plan_reorient, plan_two_stage_flip
+from ..core.reorient_motion import (
+    ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+)
 from ..core.safety_guard import SafetyGuard, load_settings
 from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
 from ..hardware.rg2_gripper import RG2Gripper
@@ -46,11 +48,23 @@ class ExecutorNode(Node):
         workspace = load_settings(config_dir / "workspace_zones.yaml")
         motion = settings["motion"]
         self._dry_run = self.declare_parameter("dry_run", motion["dry_run"]).value
+        self._step_delay = self.declare_parameter(
+            "step_delay_sec", float(settings.get("mock_robot", {}).get("step_delay_sec", 0.15)),
+        ).value
+        if not isfinite(self._step_delay) or self._step_delay < 0:
+            raise ValueError("단계 대기 시간은 유한한 0 이상의 값이어야 합니다.")
         self._velocity = self.declare_parameter("velocity", float(motion["default_velocity"])).value
         self._acceleration = self.declare_parameter(
             "acceleration", float(motion["default_acceleration"]),
         ).value
-        if not all(isfinite(value) and value > 0 for value in (self._velocity, self._acceleration)):
+        self._slow_velocity = float(motion.get("slow_velocity", 30.0))
+        self._slow_acceleration = float(motion.get("slow_acceleration", 30.0))
+        reorient = settings.get("reorient", {})
+        self._gentle_tilt_deg = float(reorient.get("gentle_tilt_deg", 40.0))
+        self._flip_lift_delta_mm = float(reorient.get("flip_lift_delta_mm", 90.0))
+        self._release_clearance_mm = float(reorient.get("release_clearance_mm", 55.0))
+        speeds = (self._velocity, self._acceleration, self._slow_velocity, self._slow_acceleration)
+        if not all(isfinite(value) and value > 0 for value in speeds):
             raise ValueError("속도와 가속도는 유한한 양수여야 합니다.")
         self._check_grip = self.declare_parameter("check_grip_detection", True).value
         self._apply_depth = self.declare_parameter(
@@ -149,6 +163,7 @@ class ExecutorNode(Node):
                 self.get_logger().warn("원격 모드 발행자가 종료되어 자동 실행 잠금을 해제했습니다.")
             stopped = self._guard.is_emergency_stopped()
             fault = self._stop_fault
+            stop_pending = self._stop_pending()
             remote = self._remote_override
             busy = self._busy
         message = (
@@ -160,11 +175,13 @@ class ExecutorNode(Node):
             message += ", 비상 정지 활성"
         if fault:
             message += ", 급정지 오류 래치"
+        if stop_pending:
+            message += ", 급정지 응답 대기"
         if remote:
             message += ", 원격 모드 활성"
         self._health.publish(NodeHealth(
             node_name="executor_node", alive=True,
-            state="ERROR" if (stopped or fault) else ("WARN" if remote else "OK"),
+            state="ERROR" if (stopped or fault) else ("WARN" if (remote or stop_pending) else "OK"),
             message=message, stamp=self.get_clock().now().to_msg(),
         ))
 
@@ -262,6 +279,8 @@ class ExecutorNode(Node):
         with self._state:
             self._check_interruption(handle)
         handle.publish_feedback(ExecuteRobotTask.Feedback(stage=stage, progress=index / total))
+        if self._dry_run and self._step_delay:
+            sleep(self._step_delay)
         with self._state:
             self._check_interruption(handle)
         command(*args)
@@ -311,12 +330,14 @@ class ExecutorNode(Node):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
         self._robot.move_joint(joints, self._velocity, self._acceleration)
 
-    def _move_linear_6d(self, handle, pose):
+    def _move_linear_6d(self, handle, pose, vel=None, acc=None):
         current, predicted = self._robot.predict_linear_j6(pose)
         if not all(self._guard.check_j6_limit(j6) for j6 in (current, predicted)):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
         self._check_interruption(handle)
-        self._robot.move_linear_6d(pose, self._velocity, self._acceleration)
+        self._robot.move_linear_6d(
+            pose, self._velocity if vel is None else vel, self._acceleration if acc is None else acc,
+        )
         self._check_interruption(handle)
         if not self._guard.check_j6_limit(self._robot.get_current_joints()[5]):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
@@ -353,9 +374,69 @@ class ExecutorNode(Node):
                 if waypoint.stage in {"approach", "reapproach_stage2"}:
                     retreat_pose = pose
 
+    def _execute_gentle_flip(self, handle, target, grasp, open_args, move_args):
+        current_j6, expected_j6 = self._predict_j6_after_linear(target[3])
+        if not self._guard.check_j6_limit(current_j6):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        tilt = self._gentle_tilt_deg
+        waypoints = plan_gentle_flip(
+            target, self._robot.get_current_joints()[4], expected_j6,
+            self._guard, tilt, self._flip_lift_delta_mm,
+            release_clearance_mm=self._release_clearance_mm,
+        )
+        (
+            approach, descend, grip, lift, tilt_point,
+            place_flip, release, lift_after, restore, retreat,
+        ) = waypoints
+        total = len(waypoints) + 1
+        self._step(handle, "open_gripper", 1, total, self._gripper.open_mm, *open_args)
+        self._step(handle, approach.stage, 2, total, self._approach, handle, approach.pose)
+        self._step(handle, descend.stage, 3, total, self._move_linear, descend.pose)
+        self._step(handle, grip.stage, 4, total, self._gripper.move_mm, *move_args)
+        self._verify_grasp(handle, grasp, approach.pose)
+        self._step(handle, lift.stage, 5, total, self._move_linear, lift.pose)
+
+        # 직선 이동 이후의 실제 관절 자세를 기준으로 J5만 변경하고 정기구학으로 TCP 범위를 검증합니다.
+        joints = list(self._robot.get_current_joints())
+        j5 = joints[4]
+        delta_j5 = -tilt if j5 >= 0.0 else tilt
+        tilted_j5 = j5 + delta_j5
+        if not all(isfinite(angle) and abs(angle) <= 125.0 for angle in (j5, tilted_j5)):
+            raise ReorientPlanningError("OUT_OF_REACH", "J5 안전 각도 범위를 초과합니다.")
+        if not self._guard.check_j6_limit(joints[5]):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        for fraction in (0.5, 1.0):
+            sample = joints.copy()
+            sample[4] = j5 + delta_j5 * fraction
+            predicted_pose = self._robot.predict_forward_pose(sample)
+            if predicted_pose is not None:
+                check = self._guard.validate_pose([*predicted_pose[:3], predicted_pose[5]])
+                if not check.ok:
+                    raise ReorientPlanningError(
+                        check.error_code, "J5 회전 궤적이 작업 범위를 벗어납니다.",
+                    )
+        tilted_joints = joints.copy()
+        tilted_joints[4] = tilted_j5
+        speeds = (
+            min(self._velocity, self._slow_velocity),
+            min(self._acceleration, self._slow_acceleration),
+        )
+        self._step(handle, tilt_point.stage, 6, total, self._robot.move_joint, tilted_joints, *speeds)
+        tilted_pose = self._robot.get_current_pose_6d()
+        place_z = min(tilted_pose[2], place_flip.pose[2])
+        place_6d = [*tilted_pose[:2], place_z, *tilted_pose[3:]]
+        self._checked_pose([*place_6d[:3], place_6d[5]])
+        self._step(handle, place_flip.stage, 7, total, self._move_linear_6d, handle, place_6d, *speeds)
+        self._step(handle, release.stage, 8, total, self._gripper.open_mm, *open_args)
+        self._step(handle, lift_after.stage, 9, total, self._move_linear_6d, handle, tilted_pose, *speeds)
+        if not self._guard.check_j6_limit(self._robot.get_current_joints()[5]):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        self._step(handle, restore.stage, 10, total, self._robot.move_joint, joints, *speeds)
+        self._step(handle, retreat.stage, 11, total, self._move_linear, retreat.pose)
+
     def _execute_grasp_task(self, handle, action, goal, grasp):
         if action == "reorient" and grasp.reorient_mode not in {
-            "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+            "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
         }:
             raise TaskFailure("INVALID_ACTION", False)
         target = self._checked_pose(goal["target_pose"])
@@ -366,6 +447,9 @@ class ExecutorNode(Node):
         open_args = (grasp.open_width_mm, grasp.grasp_force_n)
         move_args = (grasp.grasp_width_mm, grasp.grasp_force_n)
         if action == "reorient":
+            if grasp.reorient_mode == "gentle_flip":
+                self._execute_gentle_flip(handle, target, grasp, open_args, move_args)
+                return
             if grasp.reorient_mode == "two_stage_flip":
                 waypoints = plan_two_stage_flip(target, self._guard)
                 self._execute_two_stage_flip(handle, waypoints, grasp, open_args, move_args)

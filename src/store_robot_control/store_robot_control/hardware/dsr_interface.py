@@ -179,6 +179,16 @@ class DoosanRobotInterface:
         except (RuntimeError, ValueError, TypeError) as exc:
             raise MotionUnreachableError("목표 자세의 역기구학 해를 구하지 못했습니다.") from exc
 
+    def predict_forward_pose(self, joints_deg: list[float]) -> list[float] | None:
+        joints = self._six_values(joints_deg, "fkin")
+        if self._dry_run or not hasattr(self._api, "fkin"):
+            return None
+        pose = self._api.fkin(self._posj(joints), ref=self._api.DR_BASE)
+        try:
+            return self._six_values(pose, "fkin")
+        except (RuntimeError, ValueError, TypeError) as exc:
+            raise MotionUnreachableError("정기구학 좌표를 계산하지 못했습니다.") from exc
+
     def move_joint(self, joints_deg: list[float], vel: float, acc: float):
         joints = self._six_values(joints_deg, "movej")
         if self._dry_run:

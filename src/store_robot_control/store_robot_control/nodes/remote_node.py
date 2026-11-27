@@ -358,6 +358,11 @@ class RemoteNode(Node):
             self._motion_idle.clear()
         try:
             self._robot.move_linear_4d(check.clamped_pose, self._velocity, self._acceleration)
+            x, y, z, rz_out = check.clamped_pose
+            self.get_logger().info(
+                f"원격 이동 → [{x:.1f}, {y:.1f}, {z:.1f}, {rz_out:.1f}]",
+                throttle_duration_sec=0.3,
+            )
         finally:
             with self._state:
                 self._moving = False
@@ -387,8 +392,10 @@ class RemoteNode(Node):
         try:
             if closed:
                 self._gripper.move_mm(self._close_width, self._force)
+                self.get_logger().info(f"원격 그리퍼 → 닫힘 ({self._close_width:.0f}mm)")
             else:
                 self._gripper.open_mm(self._open_width, self._force)
+                self.get_logger().info(f"원격 그리퍼 → 열림 ({self._open_width:.0f}mm)")
         except Exception as exc:
             self.get_logger().error(f"원격 그리퍼 명령 실패 ({exc})", throttle_duration_sec=2.0)
             return

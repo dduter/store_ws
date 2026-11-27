@@ -7,30 +7,30 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    common = ("config_dir", "dry_run", "velocity", "acceleration")
+    executor_options = ("step_delay_sec", "check_grip_detection", "apply_grasp_depth_offset")
+
+    def include(launch_file, arguments, condition):
+        return IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(PathJoinSubstitution([
+                FindPackageShare("store_bringup"), "launch", launch_file,
+            ])),
+            condition=condition,
+            launch_arguments={name: LaunchConfiguration(name) for name in arguments}.items(),
+        )
+
+    mock = LaunchConfiguration("use_mock_robot")
     return LaunchDescription([
         DeclareLaunchArgument("use_mock_robot", default_value="true"),
         DeclareLaunchArgument("config_dir", default_value=""),
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("step_delay_sec", default_value=""),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(PathJoinSubstitution([
-                FindPackageShare("store_bringup"), "launch", "mock_robot.launch.py",
-            ])),
-            condition=IfCondition(LaunchConfiguration("use_mock_robot")),
-            launch_arguments={
-                "config_dir": LaunchConfiguration("config_dir"),
-                "step_delay_sec": LaunchConfiguration("step_delay_sec"),
-            }.items(),
-        ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(PathJoinSubstitution([
-                FindPackageShare("store_bringup"), "launch", "executor.launch.py",
-            ])),
-            condition=UnlessCondition(LaunchConfiguration("use_mock_robot")),
-            launch_arguments={
-                "config_dir": LaunchConfiguration("config_dir"),
-                "dry_run": LaunchConfiguration("dry_run"),
-            }.items(),
-        ),
-        # 인식 노드와 오케스트레이터는 준비되면 이 목록에 추가합니다.
+        DeclareLaunchArgument("enable_remote", default_value="false"),
+        DeclareLaunchArgument("velocity", default_value=""),
+        DeclareLaunchArgument("acceleration", default_value=""),
+        DeclareLaunchArgument("check_grip_detection", default_value="true"),
+        DeclareLaunchArgument("apply_grasp_depth_offset", default_value="true"),
+        include("mock_robot.launch.py", ("config_dir", "step_delay_sec"), IfCondition(mock)),
+        include("executor.launch.py", (*common, *executor_options), UnlessCondition(mock)),
+        include("remote.launch.py", common, IfCondition(LaunchConfiguration("enable_remote"))),
     ])

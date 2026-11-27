@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from math import isfinite
+from math import cos, hypot, isfinite, radians, sin
 from typing import Optional
 
 from .safety_guard import SafetyGuard
@@ -13,6 +13,7 @@ class MotionWaypoint:
     orientation_zyz: Optional[list[float]] = None
     action: str = "move_linear"
     check_grip: bool = False
+    j5_delta_deg: float = 0.0
 
 
 class ReorientPlanningError(ValueError):
@@ -128,3 +129,74 @@ def plan_two_stage_flip(target_pose, safety_guard: SafetyGuard, flip_lift_delta_
         waypoint("release_flipped", x, y, z_grasp, tilted, "release"),
         waypoint("retreat", x, y, transit_z, tilted),
     ]
+
+
+def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
+                     safety_guard: SafetyGuard, tilt_deg: float = 40.0,
+                     flip_lift_delta_mm: float = 90.0, max_j5_abs_deg: float = 125.0,
+                     release_clearance_mm: float = 55.0, tool_length_mm: float = 240.0):
+    guard = safety_guard
+    check = guard.validate_pose(target_pose)
+    if not check.ok:
+        raise ReorientPlanningError(check.error_code, check.message)
+    values = (
+        current_j5_deg, current_j6_deg, tilt_deg, flip_lift_delta_mm,
+        max_j5_abs_deg, release_clearance_mm, tool_length_mm,
+    )
+    if (not all(map(isfinite, values)) or not 10.0 <= tilt_deg <= 55.0
+            or flip_lift_delta_mm <= 0 or release_clearance_mm < 0 or tool_length_mm < 0):
+        raise ReorientPlanningError("INVALID_POSE", "재정렬 각도 또는 상승 높이 설정이 유효하지 않습니다.")
+    if not guard.check_j6_limit(current_j6_deg):
+        raise ReorientPlanningError("J6_LIMIT_VIOLATION", "J6 각도가 허용 범위를 벗어났습니다.")
+
+    x, y, target_z, rz = check.clamped_pose
+    z_grasp = max(guard.z_min_mm, target_z)
+    transit_z = guard.safe_transit_z(z_grasp)
+    lift_z = max(z_grasp + flip_lift_delta_mm, guard.safe_transit_z_mm)
+    if max(lift_z, transit_z) > guard.bounds["z_max"] or lift_z <= z_grasp:
+        raise ReorientPlanningError("OUT_OF_REACH", "재정렬에 필요한 상승 여유를 확보할 수 없습니다.")
+
+    delta_j5 = -tilt_deg if current_j5_deg >= 0.0 else tilt_deg
+    tilted_j5 = current_j5_deg + delta_j5
+    if max(abs(current_j5_deg), abs(tilted_j5)) > max_j5_abs_deg:
+        raise ReorientPlanningError("OUT_OF_REACH", "J5 안전 각도 범위를 초과합니다.")
+
+    # J5가 0° 방향으로 펴지며 생기는 TCP 원호 궤적(방사 외측 + 상승)을 작업 범위 내에서 검증합니다.
+    radial = hypot(x, y)
+    ux, uy = (x / radial, y / radial) if radial > 1e-6 else (1.0, 0.0)
+    swept_x, swept_y, swept_z = x, y, lift_z
+    for fraction in (0.5, 1.0):
+        angle = radians(tilt_deg * fraction)
+        swept_x = x + ux * tool_length_mm * sin(angle)
+        swept_y = y + uy * tool_length_mm * sin(angle)
+        swept_z = lift_z + tool_length_mm * (1.0 - cos(angle))
+        arc_check = guard.validate_pose([swept_x, swept_y, swept_z, rz])
+        if not arc_check.ok:
+            raise ReorientPlanningError(
+                arc_check.error_code, "J5 회전 중 TCP 궤적이 작업 범위를 벗어납니다.",
+            )
+
+    # 기울인 자세에서 공중 낙하를 막기 위해 지지면 여유 높이까지 내려온 뒤 그리퍼를 엽니다.
+    place_z = min(swept_z, max(guard.z_min_mm + 45.0, z_grasp + release_clearance_mm))
+
+    waypoints = [
+        MotionWaypoint("approach", [x, y, transit_z, rz], current_j6_deg),
+        MotionWaypoint("descend", [x, y, z_grasp, rz], current_j6_deg),
+        MotionWaypoint("grasp", [x, y, z_grasp, rz], current_j6_deg, action="grasp", check_grip=True),
+        MotionWaypoint("lift", [x, y, lift_z, rz], current_j6_deg),
+        MotionWaypoint("gentle_tilt_j5", [swept_x, swept_y, swept_z, rz], current_j6_deg,
+                       action="move_joint_j5", j5_delta_deg=delta_j5),
+        MotionWaypoint("place_flip", [swept_x, swept_y, place_z, rz], current_j6_deg),
+        MotionWaypoint("release_flip", [swept_x, swept_y, place_z, rz], current_j6_deg, action="release"),
+        MotionWaypoint("lift_after_flip", [swept_x, swept_y, swept_z, rz], current_j6_deg),
+        MotionWaypoint("restore_j5", [x, y, lift_z, rz], current_j6_deg,
+                       action="move_joint_j5", j5_delta_deg=-delta_j5),
+        MotionWaypoint("retreat", [x, y, transit_z, rz], current_j6_deg),
+    ]
+    for waypoint in waypoints:
+        check = guard.validate_pose(waypoint.pose)
+        if not check.ok:
+            raise ReorientPlanningError(check.error_code, check.message)
+        if not guard.check_j6_limit(waypoint.j6_deg):
+            raise ReorientPlanningError("J6_LIMIT_VIOLATION", "예상 J6 각도가 허용 범위를 벗어났습니다.")
+    return waypoints

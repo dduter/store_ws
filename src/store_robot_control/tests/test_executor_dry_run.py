@@ -63,6 +63,7 @@ def node(tmp_path, monkeypatch):
         executor = ExecutorNode(parameter_overrides=[
             Parameter("config_dir", value=str(cfg_dir)),
             Parameter("dry_run", value=True),
+            Parameter("step_delay_sec", value=0.0),
             Parameter("log_dir", value=str(tmp_path)),
         ])
         assert executor._dsr_node is None
@@ -112,12 +113,10 @@ def test_all_actions(node, action, tmp_path):
         assert handle.feedback == [action]
     elif action == "reorient":
         assert handle.feedback == [
-            "open_gripper", "approach", "descend", "grasp", "lift_stage1", "tilt_90",
-            "place_standing", "release_stage1", "retreat_stage1", "reapproach_stage2",
-            "descend_stage2", "grasp_stage2", "lift_stage2", "lay_down_180",
-            "place_flipped", "release_flipped", "retreat",
+            "open_gripper", "approach", "descend", "grasp", "lift", "gentle_tilt_j5",
+            "place_flip", "release_flip", "lift_after_flip", "restore_j5", "retreat",
         ]
-        assert list(result.final_pose) == [350, 20, 260, 90]
+        assert list(result.final_pose) == [350, 20, 260, 0]
         assert -150 < node._robot.get_current_joints()[5] < 150
     else:
         assert handle.feedback == [
@@ -379,6 +378,7 @@ def test_reorient_rejects_non_reorientable_category(node):
 
 
 def test_reorient_second_grasp_failure_retreats_at_offset(node, monkeypatch):
+    node._grasp.categories["paper_box"]["reorient_mode"] = "two_stage_flip"
     detections = iter([True, False])
     monkeypatch.setattr(node._gripper, "is_grip_detected", lambda: next(detections))
     handle = GoalHandle("reorient")
@@ -489,6 +489,7 @@ def test_teach_zones_fails_on_tcp_error_and_prints_effective_rz(capsys):
 
 @pytest.mark.parametrize("rz", [0.0, -90.0, 90.0, -45.0, 45.0])
 def test_two_stage_flip_from_measured_home(node, monkeypatch, rz):
+    node._grasp.categories["paper_box"]["reorient_mode"] = "two_stage_flip"
     from conftest import REPO_CONFIG
     from store_robot_control.core.safety_guard import load_settings
 
@@ -529,3 +530,35 @@ def test_remote_override_rejects_goals_and_reports_health(node, monkeypatch):
     node._publish_health()
     assert node._remote_override is False
     assert run_goal(node, handle).success
+
+
+@pytest.mark.parametrize("live_j5", [90.0, -90.0])
+def test_gentle_flip_uses_live_j5_and_caps_joint_speed(node, monkeypatch, live_j5):
+    move_joint = node._robot.move_joint
+    move_linear = node._robot.move_linear_4d
+    commands = []
+    node._velocity = 20.0
+    node._apply_depth = False
+
+    def linear(pose, *args, **kwargs):
+        move_linear(pose, *args, **kwargs)
+        if pose[2] == 310.0:
+            joints = node._robot.get_current_joints()
+            joints[4] = live_j5
+            move_joint(joints, 20.0, 30.0)
+
+    def joint(joints, velocity, acceleration):
+        before = node._robot.get_current_joints()
+        move_joint(joints, velocity, acceleration)
+        commands.append((before, node._robot.get_current_joints(), velocity, acceleration))
+
+    monkeypatch.setattr(node._robot, "move_joint", joint)
+    monkeypatch.setattr(node._robot, "move_linear_4d", linear)
+    result = run_goal(node, GoalHandle("reorient", target=[350.0, 20.0, 220.0, 0.0]))
+    assert result.success
+    before, tilted, velocity, acceleration = commands[0]
+    assert before[4] == live_j5
+    assert tilted[:4] == before[:4] and tilted[5] == before[5]
+    assert tilted[4] == (50.0 if live_j5 > 0 else -50.0)
+    assert (velocity, acceleration) == (20.0, 30.0)
+    assert commands[1] == (tilted, before, 20.0, 30.0)

@@ -18,7 +18,9 @@ from store_interfaces.srv import VerifyRemoteKey
 
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
-from ..core.reorient_motion import MotionWaypoint, ReorientPlanningError, plan_reorient
+from ..core.reorient_motion import (
+    MotionWaypoint, ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+)
 from ..core.safety_guard import SafetyGuard, load_settings
 
 
@@ -45,6 +47,7 @@ class MockRobot(Node):
         super().__init__("mock_robot")
         config_dir = Path(self.declare_parameter("config_dir", str(find_config_dir())).value).resolve()
         settings = load_settings(config_dir / "control_params.yaml")
+        self._reorient = settings.get("reorient", {})
         self._delay = self.declare_parameter(
             "step_delay_sec", float(settings["mock_robot"]["step_delay_sec"]),
         ).value
@@ -155,16 +158,25 @@ class MockRobot(Node):
             raise ReorientPlanningError(check.error_code, check.message)
         return check.clamped_pose
 
-    def _waypoints(self, action, target, destination):
+    def _waypoints(self, action, target, destination, grasp_plan):
         if action in {"home", "scan_pose"}:
             pose, j6 = self._fixed_pose(action)
             if not self._guard.check_j6_limit(j6):
                 raise ReorientPlanningError("J6_LIMIT_VIOLATION", "고정 자세의 J6 각도가 허용 범위를 벗어났습니다.")
-            return [MotionWaypoint(action, self._checked_pose(pose), j6)]
+            # 고정 관절 자세의 Cartesian 참조값은 작업 좌표 제한을 적용하지 않습니다.
+            return [MotionWaypoint(action, pose, j6)]
 
         guard = self._guard
         target = self._checked_pose(target)
         if action == "reorient":
+            if grasp_plan.reorient_mode == "gentle_flip":
+                return plan_gentle_flip(
+                    target, guard.poses["home_joint_deg"][4], self._j6, guard,
+                    self._reorient.get("gentle_tilt_deg", 40.0),
+                    self._reorient.get("flip_lift_delta_mm", 90.0),
+                )
+            if grasp_plan.reorient_mode == "two_stage_flip":
+                return plan_two_stage_flip(target, guard)
             # 모의 로봇은 역기구학 대신 접근 시 사용할 J6 각도를 정합니다.
             j6 = self._j6
             if not any(guard.j6_min_deg < j6 + delta < guard.j6_max_deg for delta in (180.0, -180.0)):
@@ -219,7 +231,15 @@ class MockRobot(Node):
                         grasp_plan = self._grasp.plan_grasp(
                             request.product_category, request.grasp_width_mm, request.grasp_force_n,
                         )
-                    waypoints = self._waypoints(action, goal["target_pose"], goal["dest_pose"])
+                    if action == "reorient" and grasp_plan.reorient_mode not in {
+                        "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+                    }:
+                        error_code = "INVALID_ACTION"
+                        waypoints = []
+                    else:
+                        waypoints = self._waypoints(
+                            action, goal["target_pose"], goal["dest_pose"], grasp_plan,
+                        )
                     for index, waypoint in enumerate(waypoints, 1):
                         deadline = monotonic() + self._delay
                         while not self._interruption(goal_handle)[0]:

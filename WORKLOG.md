@@ -367,3 +367,34 @@
 ### Follow-ups / Caveats
 - 웹캠 손 추종 모드(`--mode webcam`)를 실사용하려면 `pip install mediapipe` 설치 필요(미설치 환경에서는 `--mode keyboard` 또는 `--mode auto`로 즉시 키보드 테스트 가능).
 - 실물 M0609 + RG2에서 `remote_node`를 `dry_run:=false`로 실행할 때는 `executor_node`와 동일 로봇에 대한 Doosan 서비스 동시 접근을 피하거나, 핸드오버 검증 후 저속(`velocity:=20.0`)으로 테스트 권장.
+
+## 2026-11-27 12:56 — `gentle_flip` 저속 소각도 `J5` 반전, 단독 시나리오 검증 도구(`robot_demo`), `store_bot.launch.py` 통합 정비
+
+### Goal / Background
+- 실물 테스트에서 90° 눕히기(`two_stage_flip`)가 팔 본체(`J1/J4`)를 크게 휘두르며 테이블 가까이 내려와 위험했던 문제를 해소하기 위해, 손목 `J5`만 40° 저속으로 기울이고 지지면 안전 여유 높이까지 내려놓은 뒤 복원하는 `gentle_flip`을 기본 `reorient` 모드로 전환함.
+- 비전/LLM 통합 없이 로봇 파트 단독으로 전 시나리오(안전 차단·동작·비상정지·블랙박스 로그)를 자동 검증·시연할 수 있는 `robot_demo` 및 `scripts/run_robot_demo.py`를 구축함.
+- `store_bot.launch.py`에서 `executor_node`와 `remote_node` 통합 실행(`enable_remote`) 및 실행 파라미터 전달을 일원화하고 `README.md`를 최신화함.
+
+### Responsible Agent(s)
+- **Codex (`codex exec -s workspace-write`)**: `plan_gentle_flip`, `executor_node._execute_gentle_flip`, `robot_demo.py`, `scripts/run_robot_demo.py`, `store_bot.launch.py`, `executor.launch.py`, `mock_robot.py` 및 초기 단위 테스트 구현.
+- **Codex (`codex exec review --uncommitted`)**: 크로스모델 리뷰 수행 — P1 3건(중복 액션 서버 판정 보강, `gentle_flip` 공중 낙하 방지 지지면 하강, `J5` 회전 중 TCP 원호 작업 범위 검증) 및 P2 1건(`robot_demo` 타임아웃 시 실행 중 목표 취소) 지적.
+- **Antigravity**: 리뷰 지적 4건 전량 수정(`plan_gentle_flip` 원호 궤적 검증 + `place_flip`/`lift_after_flip` 추가, `dsr_interface.predict_forward_pose` `fkin` 검증, `robot_demo` 그래프/퍼블리셔 중복 서버 차단 및 타임아웃 자동 취소), `remote_node.py` 실시간 이동/그리퍼 로그 추가, 회귀 테스트 확충, 빌드·156건 단위 테스트·`store_bot.launch.py` + `robot_demo` CycloneDDS 10종 라이브 검증, `WORKLOG.md` 기록 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/control_params.yaml`, `products_catalog.yaml`: `reorient` 섹션(`gentle_tilt_deg: 40.0`, `flip_lift_delta_mm: 90.0`, `release_clearance_mm: 55.0`) 추가 및 일반 상품 3종 기본 `reorient_mode`를 `"gentle_flip"`으로 전환.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_gentle_flip()` 구현(`J5`를 0° 방향으로만 40° 회전, 240mm RG2 원호 궤적 작업범위 검증, `place_flip`→`release_flip`→`lift_after_flip`→`restore_j5` 10스텝 생성).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/hardware/dsr_interface.py`: `predict_forward_pose()`(`fkin`) 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: `_execute_gentle_flip()` 구현(저속 `min(vel, slow_vel)`, 실기 `fkin` 궤적 검증, 지지면 여유 높이 하강 후 개방 및 복원), `step_delay_sec` dry_run 지원.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/robot_demo.py`, `/home/yongsoo/store_ws/scripts/run_robot_demo.py` (신규): `all`/`safety`/`motion`/`estop` 스위트 자동 검증, 중복 액션 서버 차단, 타임아웃 시 자동 목표 취소, 블랙박스 요약 출력.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/remote_node.py`: 실시간 원격 이동 좌표 및 그리퍼 개폐 정보 로그 추가.
+- `/home/yongsoo/store_ws/src/store_bringup/launch/store_bot.launch.py`, `executor.launch.py`, `README.md`, `src/store_robot_control/setup.py`: 통합 런치 옵션(`enable_remote`, `velocity`, `acceleration`, `check_grip_detection`, `apply_grasp_depth_offset`, `step_delay_sec`), `robot_demo` 엔트리포인트, 최신 가이드 반영.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/`: `test_robot_demo.py` 신규 추가 및 `test_reorient_motion.py`, `test_executor_dry_run.py`, `test_grasp_planner.py` 갱신(총 156건).
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control store_bringup` 성공 (`2.26s`).
+- `pytest -q src/store_robot_control/tests` → **156 passed in 13.78s**.
+- `store_bot.launch.py use_mock_robot:=false dry_run:=true enable_remote:=true` + `ros2 run store_robot_control robot_demo --suite all --yes` (CycloneDDS) → **10 / 10 시나리오 전부 통과** (`z_min_violation`, `out_of_reach`, `invalid_action`, `home`, `scan_pose`, `pick_place`, `move_to_buffer`, `restore_from_buffer`, `reorient`, `estop`).
+
+### Follow-ups / Caveats
+- 실물 로봇(M0609 + RG2)에서 `robot_demo --suite safety` 및 `--suite estop` 실행으로 실물 비상정지 즉시 중단·복구 확인 후 4번(`hand_client` 웹캠/키보드 보완) 진행 예정.
+- 최종 상품·작업대 확정 시 P0 체크리스트(`grasp_depth_offset_mm` 3종, `gentle_tilt_deg`/`release_clearance_mm`, `scan_pose`/`buffer_slots`/폐기통 좌표) 실측 튜닝 필요.
