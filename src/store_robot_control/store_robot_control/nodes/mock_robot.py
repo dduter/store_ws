@@ -22,7 +22,7 @@ from ..core.safety_guard import SafetyGuard, load_settings
 
 
 ACTION_NAME = "/store/execute_robot_task"
-TRANSFER_ACTIONS = {"pick_place", "move_to_buffer", "restore_from_buffer", "give_expired_box"}
+TRANSFER_ACTIONS = {"pick_place", "move_to_buffer", "restore_from_buffer"}
 
 
 def find_config_dir():
@@ -164,8 +164,6 @@ class MockRobot(Node):
                 j6 = guard.clamp_j6_angle(-90.0)
             return plan_reorient(target, j6, guard)
 
-        if action == "give_expired_box" and not any(destination[:3]):
-            destination = guard.poses["employee_handover_pose"]
         destination = self._checked_pose(destination)
         transit_z = guard.safe_transit_z(max(target[2], destination[2]))
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])

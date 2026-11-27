@@ -32,7 +32,6 @@ TEST_WORKSPACE = {
         "scan_pose_joint_deg": [0.0, 10.0, 85.0, 0.0, 85.0, 0.0],
         "home_cartesian": [380.0, 0.0, 380.0, 0.0, 180.0, 0.0],
         "scan_pose_cartesian": [400.0, 0.0, 420.0, 0.0, 180.0, 0.0],
-        "employee_handover_pose": [480.0, -220.0, 220.0, 0.0],
         "reorient_lift_z_mm": 220.0,
     },
     "zones": {

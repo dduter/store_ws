@@ -45,11 +45,6 @@ poses:
   - 60.48243713378906
   - -177.7274627685547
   - 57.50727462768555
-  employee_handover_pose:
-  - 480.0
-  - -220.0
-  - 220.0
-  - 0.0
   reorient_lift_z_mm: 220.0
 zones:
   display_area:

@@ -352,10 +352,7 @@ class ExecutorNode(Node):
             self._step(handle, "retreat", 8, total, self._move_linear, waypoints[7].pose)
             return
 
-        destination = goal["dest_pose"]
-        if action == "give_expired_box" and not any(destination[:3]):
-            destination = self._guard.poses["employee_handover_pose"]
-        destination = self._checked_pose(destination)
+        destination = self._checked_pose(goal["dest_pose"])
         transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])
         above_destination = self._checked_pose([*destination[:2], transit_z, destination[3]])

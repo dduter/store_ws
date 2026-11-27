@@ -78,6 +78,6 @@ def test_rg2_clamping(planner, override, expected):
     assert (plan.grasp_width_mm, plan.open_width_mm, plan.grasp_force_n) == expected
 
 
-@pytest.mark.parametrize("category", ["expired_box", "cigarette_mock"])
+@pytest.mark.parametrize("category", ["cigarette_mock"])
 def test_special_categories_disable_reorient(planner, category):
     assert planner.plan_grasp(category).reorient_mode == "none"

@@ -96,13 +96,11 @@ def test_doosan_simulated_pose_and_joints():
 
 
 @pytest.mark.parametrize("action", [
-    "home", "scan_pose", "pick_place", "move_to_buffer", "restore_from_buffer",
-    "give_expired_box", "reorient",
+    "home", "scan_pose", "pick_place", "move_to_buffer", "restore_from_buffer", "reorient",
 ])
 def test_all_actions(node, action, tmp_path):
     poses = node._guard.poses
-    destination = [0.0] * 4 if action == "give_expired_box" else DESTINATION
-    handle = GoalHandle(action, destination=destination)
+    handle = GoalHandle(action, destination=DESTINATION)
     result = run_goal(node, handle)
     assert result.success
     assert result.error_code == "OK"
@@ -126,8 +124,7 @@ def test_all_actions(node, action, tmp_path):
             "open_gripper", "approach", "descend", "grasp", "lift",
             "transit", "place", "release", "retreat",
         ]
-        pose = poses["employee_handover_pose"] if action == "give_expired_box" else destination
-        assert list(result.final_pose) == [*pose[:2], node._guard.safe_transit_z(pose[2]), pose[3]]
+        assert list(result.final_pose) == [*DESTINATION[:2], node._guard.safe_transit_z(DESTINATION[2]), DESTINATION[3]]
     entry = json.loads((tmp_path / "robot_blackbox.jsonl").read_text())
     assert entry["action_type"] == action
     assert entry["error_code"] == "OK"
@@ -135,6 +132,7 @@ def test_all_actions(node, action, tmp_path):
 
 @pytest.mark.parametrize(("action", "target", "code", "safety"), [
     ("pick_place", [350.0, 20.0, 10.0, 0.0], "Z_MIN_VIOLATION", True),
+    ("give_expired_box", TARGET, "INVALID_ACTION", False),
     ("unknown", TARGET, "INVALID_ACTION", False),
 ])
 def test_invalid_tasks(node, action, target, code, safety):
@@ -367,8 +365,8 @@ def test_zyz_gimbal_lock_at_ry_180_does_not_false_trigger_j6(node):
     assert abs(node._robot.get_current_joints()[5]) < 1.0
 
 
-def test_reorient_rejects_expired_box(node):
-    handle = GoalHandle("reorient", category="expired_box")
+def test_reorient_rejects_non_reorientable_category(node):
+    handle = GoalHandle("reorient", category="cigarette_mock")
     result = run_goal(node, handle)
     assert not result.success
     assert result.error_code == "INVALID_ACTION"

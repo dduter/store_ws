@@ -69,33 +69,30 @@ def _update_workspace(choice, workspace, pose, joints):
         if input(f"z_min_mm을 {limit:.3f} mm로 저장하시겠습니까? [y/N]> ").strip().lower() != "y":
             return False
         safety["z_min_mm"] = limit
-    elif choice in {"4", "5"}:
+    elif choice == "4":
         effective_rz = top_down_effective_rz(pose)
         if effective_rz is None:
             raise ValueError(f"4D 좌표 저장은 하향 자세(ry≈180°)에서만 가능합니다 (현재 ry={pose[4]:.2f}°).")
         pose_4d = [*pose[:3], effective_rz]
-        if choice == "4":
-            poses["employee_handover_pose"] = pose_4d
+        slots = workspace["zones"].setdefault("buffer_slots", [])
+        entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
+        if not entry:
+            slots.append(pose_4d)
         else:
-            slots = workspace["zones"].setdefault("buffer_slots", [])
-            entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
-            if not entry:
-                slots.append(pose_4d)
-            else:
-                index = int(entry) - 1
-                if not 0 <= index < len(slots):
-                    raise ValueError("기존 버퍼 슬롯 번호를 입력하세요.")
-                slots[index] = pose_4d
+            index = int(entry) - 1
+            if not 0 <= index < len(slots):
+                raise ValueError("기존 버퍼 슬롯 번호를 입력하세요.")
+            slots[index] = pose_4d
     return True
 
 
 def _teach(api, path):
     while True:
-        print("\n1. home  2. scan_pose  3. z_min_mm  4. 직원 전달 자세  5. 버퍼 슬롯  q. 종료")
+        print("\n1. home  2. scan_pose  3. z_min_mm  4. 버퍼 슬롯  q. 종료")
         choice = input("저장할 항목> ").strip().lower()
         if choice == "q":
             return
-        if choice not in {"1", "2", "3", "4", "5"}:
+        if choice not in {"1", "2", "3", "4"}:
             print("메뉴에 있는 항목을 선택하세요.")
             continue
         try:

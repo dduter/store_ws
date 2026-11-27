@@ -321,3 +321,21 @@
 - 실물 M0609 `ikin` 연속 경로(`ry=180°→90°` @ `(350, 20, 260)`) 확인: `J2=-1.2°→29.7°`, `J3=79.1°→99.2°`, `J5=102.1°→123.6°`, `J6=2.3°→-48.8°` (전 구간 단조·안전).
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.35s`).
 - `pytest -q src/store_robot_control/tests` → **110 passed**.
+
+## 2026-11-27 12:08 — `give_expired_box` 액션 및 직원 전달용 설정 제거 (폐기통 `pick_place` 단일화)
+
+### Goal / Background
+- 실제 매장 운영 시나리오를 "직원이 폐기 지시 → 로봇은 폐기 대상 상품을 폐기통에 투입(`pick_place`) → 이후 직원이 직접 폐기통 처리"로 확정함에 따라, 불필요한 `give_expired_box` 액션과 `employee_handover_pose` / `expired_box` 설정을 제거함(`store_interfaces` 메시지 정의는 호환성 유지를 위해 무변경).
+
+### Responsible Agent(s)
+- **Antigravity**: 코드·설정·테스트·`README.md`에서 `give_expired_box`/`employee_handover_pose`/`expired_box` 제거, 재빌드·109개 테스트 검증 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`, `executor_node.py`: `TRANSFER_ACTIONS` 및 `employee_handover_pose` 분기 제거(`give_expired_box` 요청 시 `INVALID_ACTION` 반환).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/teach_zones.py`: `4. 직원 전달 자세` 메뉴 제거 및 `4. 버퍼 슬롯`으로 정리.
+- `/home/yongsoo/store_ws/config/workspace_zones.yaml`, `products_catalog.yaml`, `README.md`: `employee_handover_pose` 및 `expired_box` 제거(기존 실측 `z_min_mm`, `home_*`, `scan_pose_*` 보존).
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/`: `conftest.py`, `test_executor_dry_run.py`, `test_grasp_planner.py` 갱신 및 `give_expired_box` → `INVALID_ACTION` 회귀 테스트 추가.
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.08s`).
+- `pytest -q src/store_robot_control/tests` → **109 passed**.
