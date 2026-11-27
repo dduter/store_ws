@@ -8,7 +8,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def _launch_executor(context):
     parameters = {
         key: ParameterValue(LaunchConfiguration(key), value_type=bool)
-        for key in ("dry_run", "check_grip_detection")
+        for key in ("dry_run", "check_grip_detection", "apply_grasp_depth_offset")
     }
     for key, value_type in (("config_dir", str), ("velocity", float), ("acceleration", float)):
         value = LaunchConfiguration(key).perform(context)
@@ -25,5 +25,6 @@ def generate_launch_description():
         DeclareLaunchArgument("velocity", default_value=""),
         DeclareLaunchArgument("acceleration", default_value=""),
         DeclareLaunchArgument("check_grip_detection", default_value="true"),
+        DeclareLaunchArgument("apply_grasp_depth_offset", default_value="true"),
         OpaqueFunction(function=_launch_executor),
     ])

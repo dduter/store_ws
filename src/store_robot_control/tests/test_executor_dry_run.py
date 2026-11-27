@@ -217,6 +217,7 @@ def test_stop_during_blocking_motion(node, monkeypatch, emergency):
 
 
 def test_depth_offset_clamps_to_safety_floor(node, monkeypatch):
+    assert node._apply_depth is True
     heights = []
     move = node._robot.move_linear_4d
 
@@ -225,10 +226,28 @@ def test_depth_offset_clamps_to_safety_floor(node, monkeypatch):
         return move(pose, *args, **kwargs)
 
     monkeypatch.setattr(node._robot, "move_linear_4d", record_height)
-    node._apply_depth = True
     result = run_goal(node, GoalHandle("pick_place", target=[350.0, 20.0, 20.0, 0.0]))
     assert result.success
     assert min(heights) == node._guard.z_min_mm
+
+
+def test_depth_offset_applied_only_to_target_not_dest(node, monkeypatch):
+    heights = []
+    move = node._robot.move_linear_4d
+
+    def record_height(pose, *args, **kwargs):
+        heights.append(pose[2])
+        return move(pose, *args, **kwargs)
+
+    monkeypatch.setattr(node._robot, "move_linear_4d", record_height)
+    # paper_box grasp_depth_offset_mm = 18.0 -> target 50.0 -> 32.0, dest 60.0 -> unchanged 60.0
+    result = run_goal(
+        node,
+        GoalHandle("pick_place", target=[350.0, 20.0, 50.0, 0.0], destination=[420.0, -100.0, 60.0, 0.0]),
+    )
+    assert result.success
+    assert 32.0 in heights
+    assert 60.0 in heights
 
 
 def test_health_reports_emergency_and_dry_run(node, monkeypatch):

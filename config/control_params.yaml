@@ -6,6 +6,8 @@ motion:
   slow_velocity: 30.0
   slow_acceleration: 30.0
   dry_run: false
+  # Vision B sends Z_surface (mm); Robot subtracts category grasp_depth_offset_mm and clamps to z_min_mm
+  apply_grasp_depth_offset: true
 
 gripper:
   type: "rg2"

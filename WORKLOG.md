@@ -218,3 +218,21 @@
 1. LLM·비전 A/B 담당자 회신 확인 (`mm`+`deg`, `zones.buffer_slots`, 3종 카테고리, `store_interfaces` 6개 파일 일치, `Z_surface` 오프셋 담당).
 2. 실제 상품 6–9종으로 실물 `pick_place` 완주 및 `reorient`(180° 뒤집기) 파지·회전 실측 튜닝.
 3. 테이블 세팅 확정 후 `teach_zones`로 최종 `scan_pose`, `zones.buffer_slots` 2–4개, `employee_handover_pose` 실측 업데이트.
+
+## 2026-11-27 09:27 — 비전 A/B 합의 반영 (`apply_grasp_depth_offset` 기본값 `true` 활성화)
+
+### Goal / Background
+- 비전 A/B 회신에서 **`Z` 파지 깊이 오프셋 담당**을 "비전 B는 순수 물체 윗면(`Z_surface`, mm) 전달 → 로봇이 카테고리별 `grasp_depth_offset_mm` 차감(이중 차감 방지)"으로 최종 합의함에 따라, `executor_node` 및 런치 기본값을 `apply_grasp_depth_offset: true`로 전환함.
+
+### Responsible Agent(s)
+- **Antigravity**: `control_params.yaml`, `executor_node.py`, `executor.launch.py` 기본값 전환, 대상(`target_pose`)만 차감하고 투하 위치(`dest_pose`)는 유지되는지 검증하는 단위 테스트 추가, 재빌드 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/control_params.yaml`: `motion.apply_grasp_depth_offset: true` 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: `apply_grasp_depth_offset` 파라미터 기본값을 `control_params.yaml`(`True`)에서 읽도록 변경.
+- `/home/yongsoo/store_ws/src/store_bringup/launch/executor.launch.py`: `apply_grasp_depth_offset` 런치 인자(기본 `"true"`) 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/test_executor_dry_run.py`: `test_depth_offset_applied_only_to_target_not_dest` 추가.
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control store_bringup` 성공
+- `pytest -v src/store_robot_control/tests` → **57 passed**.

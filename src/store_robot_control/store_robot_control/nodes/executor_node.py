@@ -53,7 +53,9 @@ class ExecutorNode(Node):
         if not all(isfinite(value) and value > 0 for value in (self._velocity, self._acceleration)):
             raise ValueError("속도와 가속도는 유한한 양수여야 합니다.")
         self._check_grip = self.declare_parameter("check_grip_detection", True).value
-        self._apply_depth = self.declare_parameter("apply_grasp_depth_offset", False).value
+        self._apply_depth = self.declare_parameter(
+            "apply_grasp_depth_offset", bool(motion.get("apply_grasp_depth_offset", True)),
+        ).value
         blackbox = settings.get("blackbox", {})
         log_dir = self.declare_parameter(
             "log_dir", str(config_dir.parent / blackbox.get("log_dir", "data/logs")),
