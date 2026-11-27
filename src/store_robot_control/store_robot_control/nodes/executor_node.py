@@ -1,6 +1,6 @@
 from math import isfinite
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from time import monotonic, sleep
 
 import rclpy
@@ -18,7 +18,7 @@ from ..core.reorient_motion import ReorientPlanningError, plan_reorient, plan_tw
 from ..core.safety_guard import SafetyGuard, load_settings
 from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
 from ..hardware.rg2_gripper import RG2Gripper
-from .mock_robot import ACTION_NAME, TRANSFER_ACTIONS, find_config_dir
+from .mock_robot import ACTION_NAME, REMOTE_OVERRIDE_QOS, TRANSFER_ACTIONS, find_config_dir
 
 
 class TaskFailure(Exception):
@@ -63,8 +63,10 @@ class ExecutorNode(Node):
         self._blackbox = BlackboxLogger(log_dir) if blackbox.get("enabled", True) else None
         self._guard = SafetyGuard(workspace)
         self._grasp = GraspPlanner(config_dir / "products_catalog.yaml")
-        self._state = Lock()
+        self._state = RLock()
         self._busy = False
+        self._remote_override = False
+        self._saw_remote_pub = False
         self._active_goal = None
         self._stop_reason = None
         self._stop_fault = False
@@ -111,6 +113,10 @@ class ExecutorNode(Node):
             Bool, "/store/emergency_stop", self._on_emergency_stop, 10,
             callback_group=self._stop_group,
         )
+        self._remote_sub = self.create_subscription(
+            Bool, "/store/mode/remote_override", self._on_remote_override, REMOTE_OVERRIDE_QOS,
+            callback_group=self._stop_group,
+        )
         self._health = self.create_publisher(NodeHealth, "/store/node_health", 10)
         self._timer = self.create_timer(
             settings["health"]["heartbeat_period_sec"], self._publish_health,
@@ -134,15 +140,31 @@ class ExecutorNode(Node):
 
     def _publish_health(self):
         with self._state:
+            pub_count = self.count_publishers("/store/mode/remote_override")
+            if pub_count > 0:
+                self._saw_remote_pub = True
+            elif self._remote_override and self._saw_remote_pub:
+                self._remote_override = False
+                self._saw_remote_pub = False
+                self.get_logger().warn("원격 모드 발행자가 종료되어 자동 실행 잠금을 해제했습니다.")
             stopped = self._guard.is_emergency_stopped()
             fault = self._stop_fault
-        message = f"dry_run={str(self._dry_run).lower()}"
+            remote = self._remote_override
+            busy = self._busy
+        message = (
+            f"dry_run={str(self._dry_run).lower()}, "
+            f"busy={str(busy).lower()}, "
+            f"remote_override={str(remote).lower()}"
+        )
         if stopped:
             message += ", 비상 정지 활성"
         if fault:
             message += ", 급정지 오류 래치"
+        if remote:
+            message += ", 원격 모드 활성"
         self._health.publish(NodeHealth(
-            node_name="executor_node", alive=True, state="ERROR" if (stopped or fault) else "OK",
+            node_name="executor_node", alive=True,
+            state="ERROR" if (stopped or fault) else ("WARN" if remote else "OK"),
             message=message, stamp=self.get_clock().now().to_msg(),
         ))
 
@@ -180,9 +202,18 @@ class ExecutorNode(Node):
     def _stop_pending(self):
         return any(not future.done() for future in self._stop_futures)
 
+    def _on_remote_override(self, message):
+        with self._state:
+            self._remote_override = message.data
+            if self._remote_override and self._busy:
+                if self._stop_reason != "emergency":
+                    self._stop_reason = "remote"
+                self.quick_stop()
+        self._publish_health()
+
     def goal_callback(self, _request):
         with self._state:
-            if self._busy or self._stop_pending() or self._stop_fault:
+            if self._remote_override or self._busy or self._stop_pending() or self._stop_fault:
                 return GoalResponse.REJECT
             return GoalResponse.ACCEPT
 
@@ -192,6 +223,8 @@ class ExecutorNode(Node):
                 self._busy = True
                 self._active_goal = goal_handle
                 self._stop_reason = "emergency" if self._guard.is_emergency_stopped() else None
+                if self._stop_reason is None and self._remote_override:
+                    self._stop_reason = "remote"
         # 동시에 수락된 목표도 실행 콜백에서 결과를 반환합니다.
         try:
             goal_handle.execute()
@@ -200,10 +233,14 @@ class ExecutorNode(Node):
             raise
 
     def _release_goal(self, goal_handle):
+        released = False
         with self._state:
             if self._active_goal is goal_handle:
                 self._active_goal = None
                 self._busy = False
+                released = True
+        if released:
+            self._publish_health()
 
     def cancel_callback(self, goal_handle):
         with self._state:
@@ -214,10 +251,12 @@ class ExecutorNode(Node):
         return CancelResponse.ACCEPT
 
     def _check_interruption(self, goal_handle):
-        if self._stop_reason == "emergency" or self._guard.is_emergency_stopped():
-            raise TaskFailure("CANCELED", True)
-        if self._stop_reason == "cancel" or goal_handle.is_cancel_requested:
-            raise TaskFailure("CANCELED", False)
+        with self._state:
+            if self._stop_reason == "emergency" or self._guard.is_emergency_stopped():
+                raise TaskFailure("CANCELED", True)
+            if (self._stop_reason in {"cancel", "remote"} or self._remote_override
+                    or goal_handle.is_cancel_requested):
+                raise TaskFailure("CANCELED", False)
 
     def _step(self, handle, stage, index, total, command, *args):
         with self._state:

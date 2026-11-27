@@ -10,6 +10,7 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 from store_interfaces.action import ExecuteRobotTask
 from store_interfaces.msg import NodeHealth
@@ -23,6 +24,11 @@ from ..core.safety_guard import SafetyGuard, load_settings
 
 ACTION_NAME = "/store/execute_robot_task"
 TRANSFER_ACTIONS = {"pick_place", "move_to_buffer", "restore_from_buffer"}
+REMOTE_OVERRIDE_QOS = QoSProfile(
+    depth=1,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    reliability=ReliabilityPolicy.RELIABLE,
+)
 
 
 def find_config_dir():
@@ -71,7 +77,8 @@ class MockRobot(Node):
             VerifyRemoteKey, "/store/verify_remote_key", self._verify_remote_key,
             callback_group=self._callback_group,
         )
-        self._remote_pub = self.create_publisher(Bool, "/store/mode/remote_override", 10)
+        self._remote_pub = self.create_publisher(Bool, "/store/mode/remote_override", REMOTE_OVERRIDE_QOS)
+        self._remote_pub.publish(Bool(data=False))
         self._health = self.create_publisher(NodeHealth, "/store/node_health", 10)
         self._timer = self.create_timer(
             settings["health"]["heartbeat_period_sec"], self._publish_health,

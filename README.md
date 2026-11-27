@@ -36,6 +36,10 @@ ros2 launch store_bringup executor.launch.py dry_run:=false velocity:=20.0 accel
 
 # 4) 직접 교시 좌표 기록 (수동 모드 robot_mode=0에서 실행)
 ros2 run store_robot_control teach_zones
+
+# 5) 원격 조작 노드 (안전 기본값 dry_run:=true) 및 입력 클라이언트
+REMOTE_ADMIN_KEY=my-secret ros2 launch store_bringup remote.launch.py dry_run:=true
+ros2 run store_robot_control hand_client --mode keyboard
 ```
 
 ## Team Interface Conventions

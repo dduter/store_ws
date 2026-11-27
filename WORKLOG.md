@@ -339,3 +339,31 @@
 ### Verification & Review
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.08s`).
 - `pytest -q src/store_robot_control/tests` → **109 passed**.
+
+## 2026-11-27 12:25 — 원격 텔레옵 스택(`remote_node`, `hand_client`, `remote.launch.py`) 및 `executor_node` 원격 오버라이드 안전 연동
+
+### Goal / Background
+- 로봇 파트 2대 핵심 담당 중 하나인 원격 조작 시스템(`remote_node` + `hand_client` + `remote.launch.py`)을 구축하고, 실물 `executor_node`에 `/store/mode/remote_override` 인터록을 추가해 원격 모드 진입 시 자동 작업이 즉시 안전 중단·차단되도록 완성함.
+
+### Responsible Agent(s)
+- **Codex (`codex exec -s workspace-write`)**: `executor_node.py` `/store/mode/remote_override` 구독·중단, `remote_node.py`(키 인증·데드존/EMA/0.5s 디바운스/0.5s 워치독·작업영역+반경 이분탐색 클램핑·RG2 제어), `hand_client.py`(웹캠 MediaPipe + 키보드 폴백), `remote.launch.py`, `control_params.yaml` 확장 및 초기 단위 테스트 구현.
+- **Codex (`codex exec review --uncommitted`)**: 크로스모델 리뷰 수행 — P1 4건(자동↔원격 제어권 전환 동기화, `TRANSIENT_LOCAL` 재접속/크래시 복구, 이동 중 독립 워치독 급정지, 정지 직후 이동 경합 방지) 지적.
+- **Antigravity**: 전체 diff 검토, Codex 리뷰 P1 4건 전량 수정(`TRANSIENT_LOCAL` QoS 통일, `NodeHealth` `busy/remote_override` 기반 제어권 핸드오버, 발행자 이탈 시 자동 복구, `_stop_group` 독립 10 Hz 워치독·후속 급정지 타이머) 및 회귀 테스트 추가, 빌드·135건 단위 테스트·늦은 접속 CycloneDDS 스모크 테스트 검증, `README.md`/`WORKLOG.md` 갱신 및 GitHub 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/remote_node.py` (신규): `/store/verify_remote_key` 인증(`REMOTE_ADMIN_KEY` `compare_digest`), `/store/mode/remote_override`(`TRANSIENT_LOCAL`) 발행, `/store/remote/hand_cmd` JSON 수신, `TeleopPipeline` 필터링, 작업공간·반경·J6 클램핑(항상 수직 하향 `ry=180°` 유지), `NodeHealth` 기반 자동 실행기 유휴 확인 핸드오버, 독립 10 Hz 워치독/급정지 감시 타이머.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/hand_client.py` (신규): MediaPipe Hands 웹캠 입력(`landmarks_to_hand_command`) + `mediapipe` 미설치 시 자동 키보드(`WASD/RF/G/Q`) 폴백 클라이언트.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`, `mock_robot.py`: `REMOTE_OVERRIDE_QOS`(`TRANSIENT_LOCAL` + `RELIABLE`) 적용, 원격 모드 시 진행 작업 `quick_stop()` + `CANCELED` 중단 및 새 목표 거부, 발행자 크래시 시 자동 잠금 해제, `NodeHealth`에 `busy`/`remote_override` 상태 반영.
+- `/home/yongsoo/store_ws/src/store_bringup/launch/remote.launch.py` (신규), `src/store_robot_control/setup.py`, `config/control_params.yaml`, `README.md`: 런치(안전 기본값 `dry_run:=true`), 엔트리포인트(`remote_node`, `hand_client`), 텔레옵 제어 파라미터 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/test_remote_node.py` (신규), `test_executor_dry_run.py`: 원격 인증·오버라이드·경계 클램핑·디바운스·워치독·핸드오버·발행자 크래시 복구·키보드/랜드마크 테스트 추가(총 135건).
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control store_bringup` 성공 (`2.25s`).
+- `pytest -q src/store_robot_control/tests` → **135 passed in 13.26s**.
+- CycloneDDS (`ROS_DOMAIN_ID=40`, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`) 교차 프로세스 스모크 테스트 통과:
+  - 잘못된 키 거부, 유효 키 인증 → 원격 ON 시 `executor_node` 목표 거부 → `/store/remote/hand_cmd` 발행 → 원격 OFF 시 재수락
+  - `remote_node` 원격 ON 이후 늦게 실행된 `executor_node`가 `TRANSIENT_LOCAL` 래치 상태를 즉시 수신해 목표 거부(`LATE-JOINER SMOKE OK`, `HANDOVER SMOKE OK`).
+
+### Follow-ups / Caveats
+- 웹캠 손 추종 모드(`--mode webcam`)를 실사용하려면 `pip install mediapipe` 설치 필요(미설치 환경에서는 `--mode keyboard` 또는 `--mode auto`로 즉시 키보드 테스트 가능).
+- 실물 M0609 + RG2에서 `remote_node`를 `dry_run:=false`로 실행할 때는 `executor_node`와 동일 로봇에 대한 Doosan 서비스 동시 접근을 피하거나, 핸드오버 검증 후 저속(`velocity:=20.0`)으로 테스트 권장.

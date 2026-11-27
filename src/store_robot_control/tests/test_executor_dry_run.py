@@ -159,13 +159,14 @@ def test_grasp_failure_retreats_before_opening(node, action):
     assert handle.feedback[-2:] == ["grasp_fail_retreat", "grasp_fail_release"]
 
 
-@pytest.mark.parametrize("emergency", [True, False])
+@pytest.mark.parametrize("stop", ["emergency", "cancel", "remote", "emergency_then_remote"])
 @pytest.mark.parametrize(("action", "method", "missed_arrival"), [
     ("pick_place", "move_linear_4d", False),
     ("pick_place", "move_linear_4d", True),
     ("reorient", "move_linear_6d", True),
 ])
-def test_stop_during_blocking_motion(node, monkeypatch, emergency, action, method, missed_arrival):
+def test_stop_during_blocking_motion(node, monkeypatch, stop, action, method, missed_arrival):
+    emergency = stop.startswith("emergency")
     in_motion, release_motion, quick_stop_sent = Event(), Event(), Event()
     move = getattr(node._robot, method)
 
@@ -201,11 +202,14 @@ def test_stop_during_blocking_motion(node, monkeypatch, emergency, action, metho
                 node._on_emergency_stop(Bool(data=True))
                 assert node._guard.is_emergency_stopped()
                 node._on_emergency_stop(Bool(data=False))
-            else:
+            elif stop == "cancel":
                 assert node.cancel_callback(handle) == CancelResponse.ACCEPT
                 handle.is_cancel_requested = True
+            if stop in {"remote", "emergency_then_remote"}:
+                node._on_remote_override(Bool(data=True))
+                node._on_remote_override(Bool(data=False))
             assert quick_stop_sent.is_set()
-            assert stops == [1]
+            assert stops == ([1, 1] if stop == "emergency_then_remote" else [1])
             assert not result_future.done()
         finally:
             release_motion.set()
@@ -214,7 +218,7 @@ def test_stop_during_blocking_motion(node, monkeypatch, emergency, action, metho
     assert result.stopped_for_safety == emergency
     assert result.error_code == "CANCELED"
     assert handle.feedback == ["open_gripper", "approach"]
-    assert handle.status == ("aborted" if emergency else "canceled")
+    assert handle.status == ("canceled" if stop == "cancel" else "aborted")
     assert not node._busy
 
 
@@ -503,3 +507,25 @@ def test_two_stage_flip_from_measured_home(node, monkeypatch, rz):
     assert result.success
     assert recorded_j6 and all(-150 < j6 < 150 for j6 in recorded_j6)
     assert node._robot.get_current_pose_6d() == [350, 20, 260, 90, 90, 90]
+
+
+
+def test_remote_override_rejects_goals_and_reports_health(node, monkeypatch):
+    messages = []
+    monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))
+    handle = GoalHandle("home")
+    node._on_remote_override(Bool(data=True))
+    assert node.goal_callback(handle.request) == GoalResponse.REJECT
+    node._publish_health()
+    assert messages[-1].state == "WARN"
+    assert "원격 모드 활성" in messages[-1].message
+    assert "remote_override=true" in messages[-1].message
+    assert "busy=false" in messages[-1].message
+    # 원격 모드 발행자가 존재했다가 사라지면(크래시) 자동 실행 잠금이 자동 해제되어야 함
+    pubs = iter([1, 0])
+    monkeypatch.setattr(node, "count_publishers", lambda _topic: next(pubs, 0))
+    node._publish_health()
+    assert node._remote_override is True
+    node._publish_health()
+    assert node._remote_override is False
+    assert run_goal(node, handle).success

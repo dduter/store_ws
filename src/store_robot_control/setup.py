@@ -18,6 +18,8 @@ setup(
     entry_points={"console_scripts": [
         "mock_robot = store_robot_control.nodes.mock_robot:main",
         "executor_node = store_robot_control.nodes.executor_node:main",
+        "remote_node = store_robot_control.nodes.remote_node:main",
+        "hand_client = store_robot_control.nodes.hand_client:main",
         "teach_zones = store_robot_control.nodes.teach_zones:main",
     ]},
 )

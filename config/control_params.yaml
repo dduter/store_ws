@@ -33,3 +33,10 @@ teleop:
   deadzone_px: 15.0
   gripper_debounce_sec: 0.5
   watchdog_timeout_sec: 0.5
+  px_to_mm_scale: 0.25
+  max_step_mm: 15.0
+  min_move_mm: 1.0
+  control_rate_hz: 10.0
+  gripper_open_width_mm: 90.0
+  gripper_close_width_mm: 20.0
+  gripper_force_n: 18.0
