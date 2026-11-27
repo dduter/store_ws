@@ -14,7 +14,7 @@ defaults:
   open_margin_mm: 20.0
   grasp_force_n: 18.0
   grasp_depth_offset_mm: 15.0
-  reorient_mode: "flip_180_in_place"
+  reorient_mode: "two_stage_flip"
 
 # Physical gripper limits (OnRobot RG2)
 rg2_limits:
@@ -31,21 +31,21 @@ categories:
     open_width_mm: 95.0
     grasp_force_n: 20.0
     grasp_depth_offset_mm: 18.0
-    reorient_mode: "flip_180_in_place"
+    reorient_mode: "two_stage_flip"
   snack_bag:
     display_name: "봉지과자"
     grasp_width_mm: 15.0
     open_width_mm: 95.0
     grasp_force_n: 12.0
     grasp_depth_offset_mm: 15.0
-    reorient_mode: "flip_180_in_place"
+    reorient_mode: "two_stage_flip"
   candy_chocolate:
     display_name: "캔디·초콜릿류"
     grasp_width_mm: 10.0
     open_width_mm: 75.0
     grasp_force_n: 15.0
     grasp_depth_offset_mm: 12.0
-    reorient_mode: "flip_180_in_place"
+    reorient_mode: "two_stage_flip"
   # Special non-retail task categories
   expired_box:
     display_name: "폐기 박스 (직원 전달용)"

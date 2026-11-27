@@ -10,8 +10,13 @@ import yaml
 from rclpy.utilities import remove_ros_args
 
 from ..core.safety_guard import load_settings
-from ..hardware.dsr_interface import load_dsr_api
+from ..hardware.dsr_interface import ensure_tool_and_tcp, load_dsr_api, top_down_effective_rz
 from .mock_robot import find_config_dir
+
+
+def _ensure_tool_tcp(api, robot):
+    active_tool, active_tcp = ensure_tool_and_tcp(api, robot["tool_name"], robot["tcp_name"])
+    print(f"Active Tool={active_tool}, TCP={active_tcp}")
 
 
 def _read_coordinates(api):
@@ -23,6 +28,14 @@ def _read_coordinates(api):
     if len(pose) != 6 or len(joints) != 6 or not all(map(isfinite, pose + joints)):
         raise ValueError("Cartesian 및 Joint 자세는 각각 유한한 값 6개여야 합니다.")
     print(f"Cartesian (mm, deg) {pose}")
+    effective_rz = top_down_effective_rz(pose)
+    if effective_rz is None:
+        print(f"4D [x, y, z, rz]    (비하향 자세 ry={pose[4]:.2f}deg — 4D 복사 불가)")
+    else:
+        print(
+            f"4D [x, y, z, rz]    "
+            f"{[round(pose[0], 2), round(pose[1], 2), round(pose[2], 2), round(effective_rz, 2)]}"
+        )
     print(f"Joint (deg) {joints}")
     return pose, joints
 
@@ -43,7 +56,6 @@ def _save_workspace(path, workspace):
 
 def _update_workspace(choice, workspace, pose, joints):
     poses = workspace["poses"]
-    pose_4d = [*pose[:3], pose[5]]
     if choice in {"1", "2"}:
         name = "home" if choice == "1" else "scan_pose"
         poses[f"{name}_joint_deg"] = joints
@@ -57,18 +69,23 @@ def _update_workspace(choice, workspace, pose, joints):
         if input(f"z_min_mm을 {limit:.3f} mm로 저장하시겠습니까? [y/N]> ").strip().lower() != "y":
             return False
         safety["z_min_mm"] = limit
-    elif choice == "4":
-        poses["employee_handover_pose"] = pose_4d
-    else:
-        slots = workspace["zones"].setdefault("buffer_slots", [])
-        entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
-        if not entry:
-            slots.append(pose_4d)
+    elif choice in {"4", "5"}:
+        effective_rz = top_down_effective_rz(pose)
+        if effective_rz is None:
+            raise ValueError(f"4D 좌표 저장은 하향 자세(ry≈180°)에서만 가능합니다 (현재 ry={pose[4]:.2f}°).")
+        pose_4d = [*pose[:3], effective_rz]
+        if choice == "4":
+            poses["employee_handover_pose"] = pose_4d
         else:
-            index = int(entry) - 1
-            if not 0 <= index < len(slots):
-                raise ValueError("기존 버퍼 슬롯 번호를 입력하세요.")
-            slots[index] = pose_4d
+            slots = workspace["zones"].setdefault("buffer_slots", [])
+            entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
+            if not entry:
+                slots.append(pose_4d)
+            else:
+                index = int(entry) - 1
+                if not 0 <= index < len(slots):
+                    raise ValueError("기존 버퍼 슬롯 번호를 입력하세요.")
+                slots[index] = pose_4d
     return True
 
 
@@ -109,6 +126,7 @@ def main(args=None):
             "store_dsr_client", namespace=robot["robot_id"], use_global_arguments=False,
         )
         api = load_dsr_api(robot["robot_id"], robot["robot_model"], node)
+        _ensure_tool_tcp(api, robot)
         if options.print_only:
             _read_coordinates(api)
         else:

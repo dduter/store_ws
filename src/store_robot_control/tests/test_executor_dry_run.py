@@ -1,4 +1,5 @@
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -11,7 +12,7 @@ from rclpy.parameter import Parameter
 from std_msgs.msg import Bool
 from store_interfaces.action import ExecuteRobotTask
 
-from store_robot_control.hardware.dsr_interface import DoosanRobotInterface
+from store_robot_control.hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
 from store_robot_control.nodes.executor_node import ExecutorNode
 from conftest import make_test_config_dir
 
@@ -21,9 +22,9 @@ DESTINATION = [420.0, -200.0, 40.0, 0.0]
 
 
 class GoalHandle:
-    def __init__(self, action, target=TARGET, destination=DESTINATION):
+    def __init__(self, action, target=TARGET, destination=DESTINATION, category="paper_box"):
         self.request = ExecuteRobotTask.Goal(
-            action_type=action, product_category="paper_box",
+            action_type=action, product_category=category,
             target_pose=target, dest_pose=destination,
         )
         self.goal_id = SimpleNamespace(uuid=bytes(range(16)))
@@ -100,11 +101,8 @@ def test_doosan_simulated_pose_and_joints():
 ])
 def test_all_actions(node, action, tmp_path):
     poses = node._guard.poses
-    if action == "reorient":
-        node._robot.move_joint([0, 0, 90, 0, 90, -90], 60, 60)
     destination = [0.0] * 4 if action == "give_expired_box" else DESTINATION
-    target = [*TARGET[:3], -90.0] if action == "reorient" else TARGET
-    handle = GoalHandle(action, target=target, destination=destination)
+    handle = GoalHandle(action, destination=destination)
     result = run_goal(node, handle)
     assert result.success
     assert result.error_code == "OK"
@@ -116,11 +114,13 @@ def test_all_actions(node, action, tmp_path):
         assert handle.feedback == [action]
     elif action == "reorient":
         assert handle.feedback == [
-            "open_gripper", "approach", "descend", "grasp", "lift",
-            "flip_180", "place", "release", "retreat",
+            "open_gripper", "approach", "descend", "grasp", "lift_stage1", "tilt_90",
+            "place_standing", "release_stage1", "retreat_stage1", "reapproach_stage2",
+            "descend_stage2", "grasp_stage2", "lift_stage2", "lay_down_180",
+            "place_flipped", "release_flipped", "retreat",
         ]
-        assert list(result.final_pose) == [350, 20, 260, 90]
-        assert node._robot.get_current_joints()[5] == 90
+        assert list(result.final_pose) == [350, 20, 260, 0]
+        assert node._robot.get_current_joints()[5] == 0
     else:
         assert handle.feedback == [
             "open_gripper", "approach", "descend", "grasp", "lift",
@@ -135,7 +135,6 @@ def test_all_actions(node, action, tmp_path):
 
 @pytest.mark.parametrize(("action", "target", "code", "safety"), [
     ("pick_place", [350.0, 20.0, 10.0, 0.0], "Z_MIN_VIOLATION", True),
-    ("reorient", TARGET, "J6_LIMIT_VIOLATION", True),
     ("unknown", TARGET, "INVALID_ACTION", False),
 ])
 def test_invalid_tasks(node, action, target, code, safety):
@@ -150,8 +149,6 @@ def test_invalid_tasks(node, action, target, code, safety):
 
 @pytest.mark.parametrize("action", ["pick_place", "reorient"])
 def test_grasp_failure_retreats_before_opening(node, action):
-    if action == "reorient":
-        node._robot.move_joint([0, 0, 90, 0, 90, -90], 60, 60)
     node._gripper.simulate_grip_fail = True
     rz = -90.0 if action == "reorient" else 0.0
     handle = GoalHandle(action, target=[*TARGET[:3], rz])
@@ -165,13 +162,20 @@ def test_grasp_failure_retreats_before_opening(node, action):
 
 
 @pytest.mark.parametrize("emergency", [True, False])
-def test_stop_during_blocking_motion(node, monkeypatch, emergency):
+@pytest.mark.parametrize(("action", "method", "missed_arrival"), [
+    ("pick_place", "move_linear_4d", False),
+    ("pick_place", "move_linear_4d", True),
+    ("reorient", "move_linear_6d", True),
+])
+def test_stop_during_blocking_motion(node, monkeypatch, emergency, action, method, missed_arrival):
     in_motion, release_motion, quick_stop_sent = Event(), Event(), Event()
-    move = node._robot.move_linear_4d
+    move = getattr(node._robot, method)
 
     def blocking_move(*args, **kwargs):
         in_motion.set()
         assert release_motion.wait(3)
+        if missed_arrival:
+            raise MotionUnreachableError("목표 좌표 미도달")
         return move(*args, **kwargs)
 
     stops = []
@@ -185,10 +189,10 @@ def test_stop_during_blocking_motion(node, monkeypatch, emergency):
         future.set_result(SimpleNamespace(success=True))
         return future
 
-    monkeypatch.setattr(node._robot, "move_linear_4d", blocking_move)
+    monkeypatch.setattr(node._robot, method, blocking_move)
     node._stop_client = SimpleNamespace(call_async=call_async)
     node._stop_request = SimpleNamespace
-    handle = GoalHandle("pick_place")
+    handle = GoalHandle(action)
     node.handle_accepted_callback(handle)
     with ThreadPoolExecutor() as pool:
         result_future = pool.submit(node.execute_callback, handle)
@@ -288,7 +292,9 @@ def test_linear_move_rejects_j6_over_limit(node):
     assert result.error_code == "J6_LIMIT_VIOLATION"
 
 
-def test_reorient_from_home_j6_zero_succeeds_with_rotated_target(node):
+@pytest.mark.parametrize("mode", ["in_place_yaw_180", "flip_180_in_place"])
+def test_legacy_reorient_from_home(node, mode):
+    node._grasp.categories["paper_box"]["reorient_mode"] = mode
     handle = GoalHandle("reorient", target=[350.0, 20.0, 40.0, -90.0])
     result = run_goal(node, handle)
     assert result.success
@@ -311,13 +317,25 @@ def test_ensure_tool_and_tcp_skips_when_matching_and_switches_mode_when_needed()
     robot._ensure_tool_and_tcp("Tool_Weight", "GripperDA_v1")
     assert calls == []
 
+    state = {"tool": "Old_Tool", "tcp": "GripperDA_v1"}
+
+    def set_tool(name):
+        calls.append(("set_tool", name))
+        state["tool"] = name
+        return 0
+
+    def set_tcp(name):
+        calls.append(("set_tcp", name))
+        state["tcp"] = name
+        return 0
+
     robot._api = SimpleNamespace(
-        get_tool=lambda: "Old_Tool",
-        get_tcp=lambda: "GripperDA_v1",
+        get_tool=lambda: state["tool"],
+        get_tcp=lambda: state["tcp"],
         get_robot_mode=lambda: 1,
         set_robot_mode=lambda mode: calls.append(("set_mode", mode)) or 0,
-        set_tool=lambda name: calls.append(("set_tool", name)) or 0,
-        set_tcp=lambda name: calls.append(("set_tcp", name)) or 0,
+        set_tool=set_tool,
+        set_tcp=set_tcp,
     )
     robot._ensure_tool_and_tcp("Tool_Weight", "GripperDA_v1")
     assert calls == [("set_mode", 0), ("set_tool", "Tool_Weight"), ("set_mode", 1)]
@@ -331,3 +349,143 @@ def test_zyz_gimbal_lock_at_ry_180_does_not_false_trigger_j6(node):
     assert result.success
     assert result.error_code == "OK"
     assert abs(node._robot.get_current_joints()[5]) < 1.0
+
+
+def test_reorient_rejects_expired_box(node):
+    handle = GoalHandle("reorient", category="expired_box")
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.error_code == "INVALID_ACTION"
+    assert not result.stopped_for_safety
+    assert handle.feedback == []
+
+
+def test_reorient_second_grasp_failure_retreats_at_offset(node, monkeypatch):
+    detections = iter([True, False])
+    monkeypatch.setattr(node._gripper, "is_grip_detected", lambda: next(detections))
+    handle = GoalHandle("reorient")
+    result = run_goal(node, handle)
+    assert result.error_code == "GRASP_FAIL"
+    assert list(result.final_pose) == [350, 55, 260, 0]
+    assert handle.feedback[-2:] == ["grasp_fail_retreat", "grasp_fail_release"]
+
+
+def test_no_arrival_reports_out_of_reach(node, monkeypatch):
+    def fail(*args, **kwargs):
+        raise MotionUnreachableError("목표 좌표 미도달")
+
+    monkeypatch.setattr(node._robot, "move_linear_6d", fail)
+    handle = GoalHandle("reorient")
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.error_code == "OUT_OF_REACH"
+    assert result.stopped_for_safety
+    assert handle.feedback == ["open_gripper", "approach"]
+
+
+@pytest.mark.parametrize("use_6d", [True, False])
+def test_movel_checks_actual_xyz_and_orientation_on_hardware(monkeypatch, use_6d):
+    from store_robot_control.hardware import dsr_interface
+
+    commands = []
+    # 4D 하향 테스트에서는 ZYZ 짐벌락 등가 표현(140.9, 180, 140.9 == 0, 180, 0)도 통과해야 합니다.
+    actual = [350, 20, 375, 20, 90, 0] if use_6d else [350, 20, 375, 140.9, 180.0, 140.9]
+    api = SimpleNamespace(
+        DR_BASE=0, DR_MV_MOD_ABS=0,
+        get_tool=lambda: "tool", get_tcp=lambda: "tcp",
+        movel=lambda pose, **kwargs: commands.append(pose) or 0,
+        get_current_posx=lambda **kwargs: (actual, 0),
+        get_current_posj=lambda: [0, 0, 90, 0, 90, -20],
+        get_solution_space=lambda joints: 2,
+        ikin=lambda pose, solution, ref: [0, 0, 90, 0, 90, 10],
+    )
+    monkeypatch.setattr(dsr_interface, "load_dsr_api", lambda *args: api)
+    monkeypatch.setitem(sys.modules, "DR_common2", SimpleNamespace(posx=list, posj=list))
+    robot = DoosanRobotInterface(
+        "dsr01", "m0609", "tool", "tcp", actual, [0, 0, 90, 0, 90, 0],
+    )
+    assert robot.predict_linear_j6([350, 20, 390, 20, 90, 0]) == (-20, 10)
+    move = robot.move_linear_6d if use_6d else robot.move_linear_4d
+    orientation = [20, 90, 0] if use_6d else [0]
+    move([350, 20, 390, *orientation], 60, 60)
+    with pytest.raises(MotionUnreachableError, match="16.0mm > 15.0mm"):
+        move([350, 20, 391, *orientation], 60, 60)
+    assert commands[-1] == [350, 20, 391, *(orientation if use_6d else [0, 180, 0])]
+
+
+def test_movel_6d_rejects_orientation_mismatch_at_same_xyz(monkeypatch):
+    from store_robot_control.hardware import dsr_interface
+
+    # XYZ는 정확히 일치(0mm)하지만 tilt_90 자세에 도달하지 못하고 하향(0,180,0)에 머문 경우
+    actual = [350.0, 20.0, 260.0, 0.0, 180.0, 0.0]
+    api = SimpleNamespace(
+        DR_BASE=0, DR_MV_MOD_ABS=0,
+        get_tool=lambda: "tool", get_tcp=lambda: "tcp",
+        movel=lambda pose, **kwargs: 0,
+        get_current_posx=lambda **kwargs: (actual, 0),
+    )
+    monkeypatch.setattr(dsr_interface, "load_dsr_api", lambda *args: api)
+    monkeypatch.setitem(sys.modules, "DR_common2", SimpleNamespace(posx=list, posj=list))
+    robot = DoosanRobotInterface(
+        "dsr01", "m0609", "tool", "tcp", actual, [0, 0, 90, 0, 90, 0],
+    )
+    with pytest.raises(MotionUnreachableError, match="회전 오차 90.0deg > 10.0deg"):
+        robot.move_linear_6d([350.0, 20.0, 260.0, 0.0, 90.0, 0.0], 60, 60)
+
+
+def test_teach_zones_fails_on_tcp_error_and_prints_effective_rz(capsys):
+    from store_robot_control.nodes import teach_zones
+
+    bad_api = SimpleNamespace(
+        get_tool=lambda: "Tool_Weight",
+        get_tcp=lambda: "Flange",
+        get_robot_mode=lambda: 1,
+        set_robot_mode=lambda mode: 0,
+        set_tool=lambda name: 0,
+        set_tcp=lambda name: -1,
+    )
+    with pytest.raises(RuntimeError, match="set_tcp"):
+        teach_zones._ensure_tool_tcp(bad_api, {"tool_name": "Tool_Weight", "tcp_name": "GripperDA_v1"})
+
+    # 하향 자세(rx=100, ry=180, rz=145 -> 유효 rz = +45.0°)
+    top_down_api = SimpleNamespace(
+        DR_BASE=0,
+        get_current_posx=lambda **kwargs: ([350.0, 20.0, 40.0, 100.0, 180.0, 145.0], 0),
+        get_current_posj=lambda: [0.0, 0.0, 90.0, 0.0, 90.0, 45.0],
+    )
+    teach_zones._read_coordinates(top_down_api)
+    out = capsys.readouterr().out
+    assert "[350.0, 20.0, 40.0, 45.0]" in out
+
+    # 비하향 자세(ry=90°)는 4D 복사 불가 안내 출력 및 4D 저장 거부
+    tilted_api = SimpleNamespace(
+        DR_BASE=0,
+        get_current_posx=lambda **kwargs: ([350.0, 20.0, 40.0, 0.0, 90.0, 0.0], 0),
+        get_current_posj=lambda: [0.0, 0.0, 90.0, 0.0, 0.0, 0.0],
+    )
+    pose, joints = teach_zones._read_coordinates(tilted_api)
+    assert "4D 복사 불가" in capsys.readouterr().out
+    with pytest.raises(ValueError, match="하향 자세"):
+        teach_zones._update_workspace("4", {"poses": {}, "zones": {}}, pose, joints)
+
+
+@pytest.mark.parametrize("rz", [0.0, -90.0, 90.0, -45.0, 45.0])
+def test_two_stage_flip_from_measured_home(node, monkeypatch, rz):
+    from conftest import REPO_CONFIG
+    from store_robot_control.core.safety_guard import load_settings
+
+    poses = load_settings(REPO_CONFIG / "workspace_zones.yaml")["poses"]
+    node._robot.move_joint(poses["home_joint_deg"], 60, 60)
+    node._robot.set_simulated_reference_pose(poses["home_cartesian"])
+    move = node._robot.move_linear_6d
+    recorded_j6 = []
+
+    def record_move(*args):
+        move(*args)
+        recorded_j6.append(node._robot.get_current_joints()[5])
+
+    monkeypatch.setattr(node._robot, "move_linear_6d", record_move)
+    result = run_goal(node, GoalHandle("reorient", target=[*TARGET[:3], rz]))
+    assert result.success
+    assert recorded_j6 and all(-150 < j6 < 150 for j6 in recorded_j6)
+    assert node._robot.get_current_pose_6d() == [350, 20, 260, -rz, 90, 0]

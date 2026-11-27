@@ -19,6 +19,7 @@ def planner():
 def test_catalog_grasp(planner, category, expected):
     plan = planner.plan_grasp(category)
     assert plan.category == category
+    assert plan.reorient_mode == "two_stage_flip"
     assert (
         plan.grasp_width_mm,
         plan.open_width_mm,
@@ -37,6 +38,7 @@ def test_default_grasp(planner, category):
     assert planner.plan_grasp(category) == planner.plan_grasp("defaults")
     assert planner.plan_grasp(category).grasp_width_mm == 20
     assert planner.plan_grasp(category).open_width_mm == 90
+    assert planner.plan_grasp(category).reorient_mode == "two_stage_flip"
 
 
 def test_overrides(planner):
@@ -74,3 +76,8 @@ def test_per_product_override_falls_back_to_category():
 def test_rg2_clamping(planner, override, expected):
     plan = planner.plan_grasp("paper_box", *override)
     assert (plan.grasp_width_mm, plan.open_width_mm, plan.grasp_force_n) == expected
+
+
+@pytest.mark.parametrize("category", ["expired_box", "cigarette_mock"])
+def test_special_categories_disable_reorient(planner, category):
+    assert planner.plan_grasp(category).reorient_mode == "none"

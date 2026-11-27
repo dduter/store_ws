@@ -14,9 +14,9 @@ from store_interfaces.msg import NodeHealth
 
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
-from ..core.reorient_motion import ReorientPlanningError, plan_reorient
+from ..core.reorient_motion import ReorientPlanningError, plan_reorient, plan_two_stage_flip
 from ..core.safety_guard import SafetyGuard, load_settings
-from ..hardware.dsr_interface import DoosanRobotInterface
+from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
 from ..hardware.rg2_gripper import RG2Gripper
 from .mock_robot import ACTION_NAME, TRANSFER_ACTIONS, find_config_dir
 
@@ -97,6 +97,8 @@ class ExecutorNode(Node):
             **robot, home_cartesian=self._guard.poses["home_cartesian"],
             home_joint_deg=self._guard.poses["home_joint_deg"],
             dry_run=self._dry_run, dsr_node=self._dsr_node,
+            arrival_tolerance_mm=motion.get("arrival_tolerance_mm", 15.0),
+            arrival_angle_tolerance_deg=motion.get("arrival_angle_tolerance_deg", 10.0),
         )
         x, y, z, _, _, rz = self._guard.poses["home_cartesian"]
         self._final_pose = [x, y, z, rz]
@@ -243,15 +245,21 @@ class ExecutorNode(Node):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
         self._robot.move_linear_4d(pose, self._velocity, self._acceleration)
 
-    def _approach(self, handle, pose):
+    def _raise_for_approach(self, handle, pose, move_6d=None):
         current = self._robot.get_current_pose_6d()
         if current[2] < pose[2] and current[:2] != pose[:2]:
             # 현재 XY에서 먼저 상승한 뒤 목표 XY로 이동합니다.
             vertical = self._checked_pose([*current[:2], pose[2], current[5]])
             self._check_interruption(handle)
-            self._robot.move_linear_4d(
-                vertical, self._velocity, self._acceleration, rx=current[3], ry=current[4],
-            )
+            if move_6d is None:
+                self._robot.move_linear_4d(
+                    vertical, self._velocity, self._acceleration, rx=current[3], ry=current[4],
+                )
+            else:
+                move_6d([*vertical[:3], *current[3:]])
+
+    def _approach(self, handle, pose):
+        self._raise_for_approach(handle, pose)
         self._check_interruption(handle)
         self._move_linear(pose)
 
@@ -260,14 +268,53 @@ class ExecutorNode(Node):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
         self._robot.move_joint(joints, self._velocity, self._acceleration)
 
-    def _verify_grasp(self, handle, grasp, above_target):
+    def _move_linear_6d(self, handle, pose):
+        current, predicted = self._robot.predict_linear_j6(pose)
+        if not all(self._guard.check_j6_limit(j6) for j6 in (current, predicted)):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        self._check_interruption(handle)
+        self._robot.move_linear_6d(pose, self._velocity, self._acceleration)
+        self._check_interruption(handle)
+        if not self._guard.check_j6_limit(self._robot.get_current_joints()[5]):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+
+    def _verify_grasp(self, handle, grasp, above_target, retreat=None):
         if self._check_grip and not self._gripper.is_grip_detected():
-            self._step(handle, "grasp_fail_retreat", 0, 1, self._move_linear, above_target)
+            self._step(handle, "grasp_fail_retreat", 0, 1, retreat or self._move_linear, above_target)
             self._step(handle, "grasp_fail_release", 1, 1, self._gripper.open_mm,
                        grasp.open_width_mm, grasp.grasp_force_n)
             raise TaskFailure("GRASP_FAIL", True)
 
+    def _execute_two_stage_flip(self, handle, waypoints, grasp, open_args, move_args):
+        def move(pose):
+            self._move_linear_6d(handle, pose)
+
+        def approach(pose):
+            self._raise_for_approach(handle, pose, move)
+            move(pose)
+
+        total = len(waypoints) + 1
+        self._step(handle, "open_gripper", 1, total, self._gripper.open_mm, *open_args)
+        retreat_pose = None
+        for index, waypoint in enumerate(waypoints, 2):
+            if waypoint.action == "grasp":
+                self._step(handle, waypoint.stage, index, total, self._gripper.move_mm, *move_args)
+                if waypoint.check_grip:
+                    self._verify_grasp(handle, grasp, retreat_pose, move)
+            elif waypoint.action == "release":
+                self._step(handle, waypoint.stage, index, total, self._gripper.open_mm, *open_args)
+            else:
+                pose = [*waypoint.pose[:3], *waypoint.orientation_zyz]
+                command = approach if waypoint.stage == "approach" else move
+                self._step(handle, waypoint.stage, index, total, command, pose)
+                if waypoint.stage in {"approach", "reapproach_stage2"}:
+                    retreat_pose = pose
+
     def _execute_grasp_task(self, handle, action, goal, grasp):
+        if action == "reorient" and grasp.reorient_mode not in {
+            "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+        }:
+            raise TaskFailure("INVALID_ACTION", False)
         target = self._checked_pose(goal["target_pose"])
         source_z = target[2]
         if self._apply_depth:
@@ -276,6 +323,10 @@ class ExecutorNode(Node):
         open_args = (grasp.open_width_mm, grasp.grasp_force_n)
         move_args = (grasp.grasp_width_mm, grasp.grasp_force_n)
         if action == "reorient":
+            if grasp.reorient_mode == "two_stage_flip":
+                waypoints = plan_two_stage_flip(target, self._guard)
+                self._execute_two_stage_flip(handle, waypoints, grasp, open_args, move_args)
+                return
             _, expected_j6 = self._predict_j6_after_linear(target[3])
             waypoints = plan_reorient(target, expected_j6, self._guard)
             above_target = waypoints[0].pose
@@ -392,7 +443,10 @@ class ExecutorNode(Node):
                 code, stopped = interruption.code, interruption.stopped_for_safety
             else:
                 self.get_logger().error(f"로봇 작업 실행 실패 ({exc})")
-                code, stopped = "INTERNAL_ERROR", False
+                if isinstance(exc, MotionUnreachableError):
+                    code, stopped = "OUT_OF_REACH", True
+                else:
+                    code, stopped = "INTERNAL_ERROR", False
 
         if owns_robot:
             try:

@@ -3,6 +3,8 @@
 motion:
   default_velocity: 60.0
   default_acceleration: 60.0
+  arrival_tolerance_mm: 15.0
+  arrival_angle_tolerance_deg: 10.0
   slow_velocity: 30.0
   slow_acceleration: 30.0
   dry_run: false

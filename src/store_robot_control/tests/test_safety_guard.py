@@ -13,11 +13,11 @@ def guard():
 
 @pytest.mark.parametrize(("pose", "code"), [
     ([180, 0, 15, 0], ""),
-    ([720, 0, 650, 0], ""),
+    ([720, 0, 400, 0], ""),
     ([200, 0, 14.99, 0], "Z_MIN_VIOLATION"),
     ([179, 0, 15, 0], "OUT_OF_REACH"),
     ([300, 421, 15, 0], "OUT_OF_REACH"),
-    ([300, 0, 651, 0], "OUT_OF_REACH"),
+    ([300, 0, 401, 0], "OUT_OF_REACH"),
     ([720, 420, 15, 0], "OUT_OF_REACH"),
     ([300, 0, 15, float("nan")], "INVALID_POSE"),
     ([300, 0, 15], "INVALID_POSE"),
@@ -38,7 +38,7 @@ def test_j6_bounds(guard):
 def test_transit_height(guard):
     assert guard.safe_transit_z(15) == 260
     assert guard.safe_transit_z(250) == 330
-    assert guard.safe_transit_z(640) == 650
+    assert guard.safe_transit_z(390) == 400
 
 
 def test_emergency_stop(guard):

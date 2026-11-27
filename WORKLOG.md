@@ -236,3 +236,52 @@
 ### Verification & Review
 - `colcon build --symlink-install --packages-select store_robot_control store_bringup` 성공
 - `pytest -v src/store_robot_control/tests` → **57 passed**.
+
+## 2026-11-27 09:48 — `teach_zones` 실행 시 `Tool_Weight`/`GripperDA_v1` 자동 보증 및 4D 좌표 출력 보강
+
+### Goal / Background
+- 로봇 재부팅 직후 티치펜던트 TCP가 기본 플랜지(`0 mm`)인 상태에서 `teach_zones --print-only`를 실행하면 RG2 길이(`+240 mm`)만큼 높은 플랜지 Z가 출력되어 `executor_node`(`GripperDA_v1`)와 Z 오차가 발생하는 문제를 해결함.
+
+### Responsible Agent(s)
+- **Antigravity**: 실물 Doosan 컨트롤러 로그(`NOT REACHABLE`) 및 `GetCurrentToolFlangePosx` 분석, `teach_zones.py` 수정 및 재빌드.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/teach_zones.py`: `_ensure_tool_tcp()` 추가(실행 시 `Tool_Weight`/`GripperDA_v1` 자동 확인·적용 및 활성 Tool/TCP 출력) + 복사용 `4D [x, y, z, rz]` 라인 추가 출력.
+
+## 2026-11-27 11:26 — 2일차 핵심 제어 3종 일괄 구현 및 크로스모델 리뷰 반영 (`two_stage_flip`, 도달 오차 가드, `teleop_math`)
+
+### Goal / Background
+- 작업대 최종 배치 확정과 무관하게 선행 가능한 로봇 제어 핵심 3종을 일괄 구현하고, 실물 테스트에서 확인된 M0609 상단 도달 한계(`Z ≤ ~400 mm`)와 Doosan `movel`의 무음 `NOT REACHABLE` 반환 문제를 차단함.
+- 앞↔뒤 180° 반전(`reorient`) 시 J6 케이블 한계(`±150°`)를 넘지 않으면서 임의의 `rz ∈ [-90°, +90°]`에서 안전하게 뒤집을 수 있는 2단계 90°+90° 반전 시퀀스를 도입함.
+- 원격 텔레옵(`remote_node`) 구현의 순수 수학 기반(`DeadzoneFilter`, `EmaLowPassFilter`, `GripperGestureDebouncer`, `TeleopWatchdog`, `TeleopPipeline`)을 ROS 비의존 코어 모듈로 선구축함.
+
+### Responsible Agent(s)
+- **Codex (`codex exec -s workspace-write`)**: `two_stage_flip` 16단계 6D 경로 계획(`reorient_motion.py`), `move_linear_6d` / `predict_linear_j6` / `MotionUnreachableError`(`dsr_interface.py`), `executor_node.py` 6D 반전 실행 및 `OUT_OF_REACH` 매핑, 순수 Python 원격 조작 코어(`core/teleop_math.py`) 및 단위 테스트 초기 구현.
+- **Codex (`codex exec review --uncommitted`)**: 크로스모델 코드 리뷰 수행 — P1 2건(상승 여유 부족 시 `lift_z` 클램핑 문제, `teach_zones` Tool/TCP 실패 미검증) 및 P2 2건(`move_linear_6d` 회전 오차 미검사, `teach_zones` 4D `rz` 하드코딩) 지적.
+- **Antigravity**: 전체 diff 검증, `DSR_ROBOT2.py` (`get_solution_space`, `ikin`) 시그니처 대조, Codex 리뷰 지적 4건 전량 수정 및 회귀 테스트 추가, 재빌드·108개 단위 테스트·CycloneDDS 6종 라이브 스모크 테스트 실행, `WORKLOG.md` 기록 및 GitHub 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/workspace_zones.yaml`: M0609 실측 하향 도달 한계를 반영해 `safety.bounds.z_max`를 `650.0` → `400.0`으로 하향 조정(기존 실측 `z_min_mm`, `home_*`, `scan_pose_*` 값 보존).
+- `/home/yongsoo/store_ws/config/control_params.yaml`: `motion.arrival_tolerance_mm: 15.0`, `motion.arrival_angle_tolerance_deg: 10.0` 추가.
+- `/home/yongsoo/store_ws/config/products_catalog.yaml`: 기본 및 일반 상품 3종(`paper_box`, `snack_bag`, `candy_chocolate`)의 `reorient_mode`를 `"two_stage_flip"`으로 전환(`expired_box`, `cigarette_mock`은 `"none"` 유지).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_two_stage_flip()` 추가 및 `MotionWaypoint` 확장(`orientation_zyz`, `action`, `check_grip`). 상승 여유(`lift_z > z_stand`, `lift_z <= z_max`)를 확보할 수 없는 목표 높이는 클램핑하지 않고 `OUT_OF_REACH`로 거부하도록 보강.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/teleop_math.py` (신규): `DeadzoneFilter`, `EmaLowPassFilter`, `GripperGestureDebouncer`(0.5s), `TeleopWatchdog`(0.5s), `TeleopPipeline` 순수 Python 구현(ROS import 0건).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/hardware/dsr_interface.py`: `MotionUnreachableError`, `ensure_tool_and_tcp()`, `top_down_effective_rz()`, `zyz_orientation_error_deg()`(SO(3) 측지 회전 오차로 ZYZ 짐벌락 자동 해소), `move_linear_6d()`, `predict_linear_j6()`(`get_solution_space` + `ikin`) 구현 및 `movel` 이후 위치(15 mm)·회전(10°) 도달 검증 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: `two_stage_flip` 6D 실행(`_execute_two_stage_flip`, 1/2단계 `GRASP_FAIL` 후퇴 자세 보존), `reorient_mode == "none"` 시 `INVALID_ACTION` 거부, `MotionUnreachableError` → `OUT_OF_REACH` 매핑(E-Stop/Cancel 중단 우선 유지).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/teach_zones.py`: `ensure_tool_and_tcp()` 공용 헬퍼로 Tool/TCP 설정 실패 시 즉시 중단하도록 강화, 하향 자세의 실제 유효 `rz`(`rz - rx`) 출력·저장 및 비하향 자세 4D 복사/저장 방지 추가.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/`: `test_teleop_math.py` 신규 추가 및 `conftest.py`, `test_reorient_motion.py`, `test_executor_dry_run.py`, `test_grasp_planner.py`, `test_safety_guard.py` 테스트 대폭 확충(총 108개).
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.14s`).
+- `pytest -q src/store_robot_control/tests` → **108 passed in 7.39s** (순수 Python `core/` ROS 미임포트 검사 포함).
+- CycloneDDS (`ROS_DOMAIN_ID=40`, `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`) `executor.launch.py dry_run:=true` 6종 라이브 액션 스모크 테스트 통과:
+  - `home` → `OK`
+  - `reorient` (`rz=0°`, `rz=45°`) → `OK`
+  - `reorient` (`z=390 mm`, 상승 여유 부족) → `OUT_OF_REACH`
+  - `reorient` (`expired_box`) → `INVALID_ACTION`
+  - `pick_place` (`z=410 mm > z_max`) → `OUT_OF_REACH`
+
+### Follow-ups / Caveats
+- 작업대 최종 배치 확정 후 `teach_zones`로 최종 `scan_pose`, `zones.buffer_slots`, `employee_handover_pose` 실측 업데이트 필요.
+- 실물 M0609 + RG2에서 빈 공간/실제 상품으로 `two_stage_flip` 실행 시 `standing_offset_z_mm(20 mm)`, `reapproach_offset_mm(35 mm)`, `flip_lift_delta_mm(90 mm)` 실물 튜닝 권장.
+- 원격 텔레옵 웹캠/MediaPipe ROS 노드(`remote_node`) 구현 시 `core/teleop_math.py`의 `TeleopPipeline`을 바로 연결하여 사용.

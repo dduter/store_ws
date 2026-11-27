@@ -23,7 +23,7 @@ TEST_WORKSPACE = {
             "x_max": 720.0,
             "y_min": -420.0,
             "y_max": 420.0,
-            "z_max": 650.0,
+            "z_max": 400.0,
         },
         "max_radial_reach_mm": 760.0,
     },
