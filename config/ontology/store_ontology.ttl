@@ -1,0 +1,345 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix store: <http://store.cobot.org/ontology#> .
+
+<http://store.cobot.org/ontology> a owl:Ontology ;
+    rdfs:label "24시 무인편의점 물류·매장 관리 온톨로지 (OWL 2 RL)"@ko .
+
+# ==============================================================================
+# Product & Attribute Classes
+# ==============================================================================
+
+store:Product a owl:Class ;
+    rdfs:label "Product"@en .
+
+store:Snack a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:label "Snack"@en .
+
+store:BoxSnack a owl:Class ;
+    rdfs:subClassOf store:Snack ;
+    rdfs:label "BoxSnack"@en .
+
+store:BagSnack a owl:Class ;
+    rdfs:subClassOf store:Snack ;
+    rdfs:label "BagSnack"@en .
+
+store:Candy a owl:Class ;
+    rdfs:subClassOf store:Snack ;
+    rdfs:label "Candy"@en .
+
+store:Beverage a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:label "Beverage"@en .
+
+store:Tobacco a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:subClassOf store:RemoteRestrictedProduct ;
+    rdfs:label "Tobacco"@en .
+
+store:CatalogProduct a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:label "CatalogProduct"@en .
+
+store:ProductInstance a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:label "ProductInstance"@en .
+
+store:AttributeConcept a owl:Class ;
+    rdfs:label "AttributeConcept"@en .
+
+store:Brand a owl:Class ;
+    rdfs:subClassOf store:AttributeConcept ;
+    rdfs:label "Brand"@en .
+
+store:Taste a owl:Class ;
+    rdfs:subClassOf store:AttributeConcept ;
+    rdfs:label "Taste"@en .
+
+store:Color a owl:Class ;
+    rdfs:subClassOf store:AttributeConcept ;
+    rdfs:label "Color"@en .
+
+# ==============================================================================
+# Spatial & Container Classes
+# ==============================================================================
+
+store:Location a owl:Class ;
+    rdfs:label "Location"@en .
+
+store:Zone a owl:Class ;
+    rdfs:subClassOf store:Location ;
+    rdfs:label "Zone"@en .
+
+store:DisplayArea a owl:Class ;
+    rdfs:subClassOf store:Zone ;
+    rdfs:label "DisplayArea"@en .
+
+store:InboundBoxZone a owl:Class ;
+    rdfs:subClassOf store:Zone ;
+    rdfs:label "InboundBoxZone"@en .
+
+store:BufferZone a owl:Class ;
+    rdfs:subClassOf store:Zone ;
+    rdfs:label "BufferZone"@en .
+
+store:ShelfTier a owl:Class ;
+    rdfs:subClassOf store:Location ;
+    rdfs:label "ShelfTier"@en .
+
+store:ShelfSlot a owl:Class ;
+    rdfs:subClassOf store:Location ;
+    rdfs:label "ShelfSlot"@en .
+
+store:BufferSlot a owl:Class ;
+    rdfs:subClassOf store:Location ;
+    rdfs:label "BufferSlot"@en .
+
+store:Container a owl:Class ;
+    rdfs:subClassOf store:Location ;
+    rdfs:label "Container"@en .
+
+store:CheckoutContainer a owl:Class ;
+    rdfs:subClassOf store:Container ;
+    rdfs:label "CheckoutContainer"@en .
+
+store:DisposalContainer a owl:Class ;
+    rdfs:subClassOf store:Container ;
+    rdfs:label "DisposalContainer"@en .
+
+store:Role a owl:Class ;
+    rdfs:label "Role"@en .
+
+store:Customer a owl:Class ;
+    rdfs:subClassOf store:Role ;
+    rdfs:label "Customer"@en .
+
+store:Employee a owl:Class ;
+    rdfs:subClassOf store:Role ;
+    rdfs:label "Employee"@en .
+
+store:RemoteAdmin a owl:Class ;
+    rdfs:subClassOf store:Role ;
+    rdfs:label "RemoteAdmin"@en .
+
+# ==============================================================================
+# OWL 2 RL Inferred Semantic Classes (Restriction Entailments)
+# ==============================================================================
+
+store:RemoteRestrictedProduct a owl:Class ;
+    rdfs:subClassOf store:Product ;
+    rdfs:label "RemoteRestrictedProduct"@en .
+
+[ a owl:Restriction ;
+  owl:onProperty store:requiresRemoteAuth ;
+  owl:hasValue "true"^^xsd:boolean ;
+  rdfs:subClassOf store:RemoteRestrictedProduct ] .
+
+store:NeedsReorientProduct a owl:Class ;
+    rdfs:subClassOf store:ProductInstance ;
+    rdfs:label "NeedsReorientProduct"@en .
+
+[ a owl:Restriction ;
+  owl:onProperty store:isBackside ;
+  owl:hasValue "true"^^xsd:boolean ;
+  rdfs:subClassOf store:NeedsReorientProduct ] .
+
+store:DisposalCandidate a owl:Class ;
+    rdfs:subClassOf store:ProductInstance ;
+    rdfs:label "DisposalCandidate"@en .
+
+[ a owl:Restriction ;
+  owl:onProperty store:hasStatus ;
+  owl:hasValue "Expired"^^xsd:string ;
+  rdfs:subClassOf store:DisposalCandidate ] .
+
+[ a owl:Restriction ;
+  owl:onProperty store:hasStatus ;
+  owl:hasValue "MarkerContaminated"^^xsd:string ;
+  rdfs:subClassOf store:DisposalCandidate ] .
+
+[ a owl:Restriction ;
+  owl:onProperty store:hasStatus ;
+  owl:hasValue "Unreadable"^^xsd:string ;
+  rdfs:subClassOf store:DisposalCandidate ] .
+
+[ a owl:Restriction ;
+  owl:onProperty store:hasStatus ;
+  owl:hasValue "Unjudgeable"^^xsd:string ;
+  rdfs:subClassOf store:DisposalCandidate ] .
+
+# ==============================================================================
+# Object Properties & OWL 2 RL Reasoning Axioms
+# ==============================================================================
+
+store:instanceOf a owl:ObjectProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:CatalogProduct .
+
+store:ofBrand a owl:ObjectProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range store:Brand .
+
+store:ofTaste a owl:ObjectProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range store:Taste .
+
+store:ofColor a owl:ObjectProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range store:Color .
+
+store:hasEffectiveBrand a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( store:instanceOf store:ofBrand ) ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:Brand .
+
+store:hasEffectiveTaste a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( store:instanceOf store:ofTaste ) ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:Taste .
+
+store:hasEffectiveColor a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( store:instanceOf store:ofColor ) ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:Color .
+
+store:locatedIn a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain owl:Thing ;
+    rdfs:range store:Location .
+
+store:contains a owl:ObjectProperty ;
+    owl:inverseOf store:locatedIn .
+
+store:placedOnSlot a owl:ObjectProperty ;
+    rdfs:subPropertyOf store:locatedIn ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:Location .
+
+store:belongsToTier a owl:ObjectProperty ;
+    rdfs:subPropertyOf store:locatedIn ;
+    rdfs:domain store:ShelfSlot ;
+    rdfs:range store:ShelfTier .
+
+store:placedOnTier a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( store:placedOnSlot store:belongsToTier ) ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:ShelfTier .
+
+store:blocks a owl:ObjectProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:ProductInstance .
+
+store:blockedBy a owl:ObjectProperty ;
+    owl:inverseOf store:blocks ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range store:ProductInstance .
+
+store:relatedSubstitute a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain store:CatalogProduct ;
+    rdfs:range store:CatalogProduct .
+
+# ==============================================================================
+# Static Datatype Properties (Catalog / Domain Metadata)
+# ==============================================================================
+
+store:hasName a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasYoloClass a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasBrand a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasColor a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasTaste a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasCategory a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasRobotCategory a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:string .
+
+store:hasGraspWidthMm a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:float .
+
+store:requiresRemoteAuth a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:boolean .
+
+store:hasSizeMm a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:float .
+
+store:hasSweetnessRank a owl:DatatypeProperty ;
+    rdfs:domain store:Product ;
+    rdfs:range xsd:integer .
+
+store:hasTierLevel a owl:DatatypeProperty ;
+    rdfs:domain store:ShelfTier ;
+    rdfs:range xsd:integer .
+
+store:hasLabel a owl:DatatypeProperty ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:string .
+
+# ==============================================================================
+# Dynamic Datatype Properties (Real-time Scan Observations)
+# ==============================================================================
+
+store:hasTrackId a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:string .
+
+store:hasStatus a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:string .
+
+store:hasDisposalReason a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:string .
+
+store:hasExpirationRaw a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:string .
+
+store:hasPose3D a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:string .
+
+store:depthLayer a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:integer .
+
+store:isBackside a owl:DatatypeProperty ;
+    rdfs:domain store:ProductInstance ;
+    rdfs:range xsd:boolean .
+
+store:hasConfidence a owl:DatatypeProperty ;
+    rdfs:domain owl:Thing ;
+    rdfs:range xsd:float .
+
+store:hasContainerType a owl:DatatypeProperty ;
+    rdfs:domain store:Container ;
+    rdfs:range xsd:string .
+
+store:isContainerValid a owl:DatatypeProperty ;
+    rdfs:domain store:Container ;
+    rdfs:range xsd:boolean .
+
+store:hasDropPose3D a owl:DatatypeProperty ;
+    rdfs:domain store:Container ;
+    rdfs:range xsd:string .

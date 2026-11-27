@@ -3,3 +3,5 @@ scipy
 pyyaml
 pymodbus
 pytest
+rdflib>=7.0
+owlrl>=7.0

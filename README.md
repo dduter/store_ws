@@ -3,8 +3,11 @@
 24시 무인편의점 물류·매장 관리 협동로봇 프로젝트 (Doosan M0609 + OnRobot RG2 + RealSense D435i, ROS 2 Jazzy)
 
 ## Workspace Structure
-- `config/`: 중앙 YAML 설정 (`workspace_zones.yaml`, `products_catalog.yaml`, `control_params.yaml`) 및 확정 Eye-in-Hand 캘리브레이션 (`calibration/T_gripper2camera.npy`)
+- `config/`: 중앙 YAML 설정 (`workspace_zones.yaml`, `products_catalog.yaml`, `control_params.yaml`), OWL 2 RL 온톨로지 (`ontology/store_ontology.ttl`), Eye-in-Hand 캘리브레이션 (`calibration/T_gripper2camera.npy`)
 - `src/store_interfaces/`: 공용 ROS 2 인터페이스 계약 (`.msg` 3종, `.srv` 2종, `ExecuteRobotTask.action`)
+- `src/store_llm_agent/`: 음성(STT) · OWL 2 RL 온톨로지 · `STOREPLAN` 판단 에이전트 패키지
+  - `core/`: ROS 2 비의존 순수 Python 파서·온톨로지 추론·Task Formalizer·Symbolic BFS 플래너 (`pytest` 단독 실행)
+  - `nodes/`: `voice_node`, `orchestrator`
 - `src/store_robot_control/`: 로봇 제어 패키지
   - `core/`: ROS 2 비의존 순수 Python 안전·파지·재정렬·블랙박스 모듈 (`pytest` 단독 실행)
   - `hardware/`: Doosan M0609 (`dsr_interface.py`) · OnRobot RG2 (`rg2_gripper.py`) 어댑터
@@ -69,8 +72,8 @@ REMOTE_ADMIN_KEY=my-secret ros2 launch store_bringup store_bot.launch.py \
 - **좌표 단위**: 모든 3D/4D 좌표는 **`mm` + `deg`** (Robot Base Frame)
 - **버퍼 키**: `config/workspace_zones.yaml` → `zones.buffer_slots`
 - **`ExecuteRobotTask.product_category`**:
-  - 상품 카테고리 3종: `paper_box` (종이상자), `snack_bag` (봉지과자), `candy_chocolate` (캔디·초콜릿류)
-  - 특수 작업용: `cigarette_mock` (폐기 상품 투입은 `pick_place`로 폐기통 좌표 전달)
+  - 확정 매장 상품 3종(각 3개씩 총 9개 실물): `snack_bag` (봉지과자: 포스틱×3), `paper_box` (종이상자: 아몬드 빼빼로×3), `bottle` (병음료×3) *(레거시 `candy_chocolate` 호환 유지)*
+  - 특수 작업용: `ciga` / `cigarette_mock` (모형 담배 — 원격 제어 전용, 일반 폐기 투입은 `pick_place`로 폐기통 좌표 전달)
   - `grasp_width_mm` / `grasp_force_n`은 `0.0` 전달 시 로봇 파트가 자동 계산
 - **토픽 / 서비스 / 액션**:
   - Action: `/store/execute_robot_task` (`store_interfaces/action/ExecuteRobotTask`)
