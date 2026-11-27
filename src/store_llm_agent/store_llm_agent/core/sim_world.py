@@ -28,6 +28,7 @@ from store_llm_agent.core.pipeline_engine import (
     load_display_tiers,
     load_zone_bounds,
 )
+from store_llm_agent.core.scene_explorer import SceneExplorer
 from store_llm_agent.core.symbolic_planner import SymbolicPlanner
 from store_llm_agent.core.task_formalizer import Subgoal, TaskFormalizer, TaskSpec
 
@@ -505,6 +506,13 @@ def narrate_trace_korean(trace: PipelineTrace) -> str:
                 z_txt = f", 높이 {int(obj['z_mm'])}mm" if obj.get("z_mm") is not None else ""
                 lines.append(f"    - {obj['track_id']}: {name} [{st}, {_loc_label_ko(obj['location'])}{layer_txt}{z_txt}]")
 
+        explorer_queries = c.get("explorer_queries") or []
+        if explorer_queries:
+            q_str = ", ".join(f"{q['tool']}({q['count']}건)" for q in explorer_queries)
+            lines.append(f"  • Scene Explorer(Ask): {q_str}")
+            if c.get("explorer_summary"):
+                lines.append(f"    → 요약: {c['explorer_summary']}")
+
         reasoning = c.get("reasoning")
         if reasoning:
             lines.append(f"  • 판단 근거: {reasoning}")
@@ -570,6 +578,7 @@ def build_live_engine(
         scan_fn=lambda _z, _v: (True, "OK", *world.scan_visible()),
         execute_action_fn=lambda step: world.apply_robot_action(step)[:2],
         display_tiers=world.display_tiers,
+        scene_explorer=SceneExplorer(),
     )
 
 
@@ -599,6 +608,7 @@ def run_benchmark(
 
         if mode == "live":
             llm_parser = LLMParser()
+            scene_explorer: SceneExplorer | None = SceneExplorer()
             task_formalizer = TaskFormalizer()
         else:
             p_client = SimpleNamespace(
@@ -623,6 +633,7 @@ def run_benchmark(
                 beta=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=_f_parse)))
             )
             llm_parser = LLMParser(client=p_client)
+            scene_explorer = None
             task_formalizer = TaskFormalizer(client=f_client)
 
         domain = ActionDomain(
@@ -640,6 +651,7 @@ def run_benchmark(
             scan_fn=lambda _z, _v: (True, "OK", *world.scan_visible()),
             execute_action_fn=lambda step: world.apply_robot_action(step)[:2],
             display_tiers=world.display_tiers,
+            scene_explorer=scene_explorer,
         )
         t0 = time.perf_counter()
         trace = engine.handle_command(text, source=f"benchmark:{mode}")

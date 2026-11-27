@@ -230,6 +230,7 @@ class TaskFormalizer:
         world_state: WorldState,
         catalog: list[dict[str, Any]],
         domain: ActionDomain,
+        explorer_context: dict[str, Any] | None = None,
     ) -> tuple[TaskSpec, list[str]]:
         """2차 LLM을 호출해 TaskSpec을 생성하고 Schema Sanitizer로 검증한다."""
         payload: dict[str, Any] = {
@@ -237,6 +238,8 @@ class TaskFormalizer:
             "catalog": catalog,
             "world_state": world_state.to_prompt_dict(all_tier_slots=domain.all_tier_slot_ids),
         }
+        if explorer_context:
+            payload["scene_explorer_evidence"] = explorer_context
         if parsed.intent == "inbound":
             tier_names = sorted({s.rsplit("_", 1)[0] for s in domain.all_tier_slot_ids})
             payload["recommended_tier_mapping"] = compute_recommended_tier_mapping(

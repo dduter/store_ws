@@ -30,6 +30,7 @@ from store_llm_agent.core.pipeline_engine import (
     load_flip_zone,
     load_zone_bounds,
 )
+from store_llm_agent.core.scene_explorer import SceneExplorer
 from store_llm_agent.core.symbolic_planner import SymbolicPlanner
 from store_llm_agent.core.task_formalizer import TaskFormalizer
 
@@ -98,6 +99,7 @@ class OrchestratorNode(Node):
             flip_zone=load_flip_zone(zones_path),
         )
         self._planner = SymbolicPlanner()
+        self._scene_explorer = SceneExplorer()
 
         self._engine = StorePipelineEngine(
             kg_manager=self._kg,
@@ -109,6 +111,7 @@ class OrchestratorNode(Node):
             scan_fn=self._call_scan_workspace,
             execute_action_fn=self._call_execute_robot_task,
             display_tiers=display_tiers,
+            scene_explorer=self._scene_explorer,
         )
 
         self._cmd_lock = threading.Lock()

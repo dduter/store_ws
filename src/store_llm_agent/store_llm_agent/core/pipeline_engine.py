@@ -16,6 +16,7 @@ from store_llm_agent.core.action_domain import (
 from store_llm_agent.core.kg_manager import KGManager, _get_field
 from store_llm_agent.core.llm_parser import LLMParser, OrderConditions
 from store_llm_agent.core.mode_fsm import ModeFSM
+from store_llm_agent.core.scene_explorer import SceneExplorer
 from store_llm_agent.core.symbolic_planner import SymbolicPlanner
 from store_llm_agent.core.task_formalizer import TaskFormalizer
 
@@ -131,6 +132,7 @@ class StorePipelineEngine:
         execute_action_fn: ExecuteCallback,
         display_tiers: dict[str, list[list[float]]] | None = None,
         max_rescan_loops: int = 16,
+        scene_explorer: SceneExplorer | None = None,
     ) -> None:
         self.kg = kg_manager
         self.fsm = mode_fsm
@@ -142,6 +144,7 @@ class StorePipelineEngine:
         self._execute_fn = execute_action_fn
         self._display_tiers = dict(display_tiers or {})
         self.max_rescan_loops = max_rescan_loops
+        self.scene_explorer = scene_explorer
         self._last_products: list[Any] = []
         self._agent_logs: list[str] = []
         self._pending_clarification: dict[str, Any] | None = None
@@ -467,10 +470,29 @@ class StorePipelineEngine:
                 ],
             }
 
+            explorer_ctx: dict[str, Any] | None = None
+            if self.scene_explorer is not None:
+                try:
+                    exp_res = self.scene_explorer.explore(parsed, self.kg)
+                    explorer_ctx = exp_res.to_prompt_dict()
+                    cycle_info["explorer_queries"] = exp_res.tool_calls
+                    cycle_info["explorer_summary"] = exp_res.summary
+                    self._log(
+                        trace,
+                        f"[SCENE_EXPLORER] Ask {len(exp_res.tool_calls)}건 ({exp_res.elapsed_ms:.0f}ms): {exp_res.summary}",
+                    )
+                except Exception as exc:
+                    self._log(trace, f"[SCENE_EXPLORER_WARN] {exc}")
+
             try:
-                task_spec, sanitize_warnings = self.formalizer.formalize(
-                    parsed, world_state, snap["catalog"], self.domain
-                )
+                if explorer_ctx is not None:
+                    task_spec, sanitize_warnings = self.formalizer.formalize(
+                        parsed, world_state, snap["catalog"], self.domain, explorer_context=explorer_ctx
+                    )
+                else:
+                    task_spec, sanitize_warnings = self.formalizer.formalize(
+                        parsed, world_state, snap["catalog"], self.domain
+                    )
             except Exception as exc:
                 trace.message = f"TaskFormalizer 오류: {exc}"
                 self._log(trace, f"[FORMALIZE_ERR] {exc}")
