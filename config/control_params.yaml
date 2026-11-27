@@ -1,0 +1,22 @@
+# 로봇 제어, 비전 임계값, 원격 제어 파라미터
+robot:
+  dry_run: false
+  mock_mode: true
+  vel_l: 100.0
+  acc_l: 100.0
+  vel_j: 40.0
+  acc_j: 40.0
+  max_reorient_attempts: 1
+
+vision:
+  yolo_conf_threshold: 0.65
+  vest_conf_threshold: 0.70
+  vest_consecutive_frames: 5
+  depth_layer_gap_mm: 25.0
+  vlm_max_workers: 4
+
+teleop:
+  ema_alpha: 0.25
+  deadzone_px: 15.0
+  gripper_debounce_sec: 0.5
+  watchdog_timeout_sec: 1.5

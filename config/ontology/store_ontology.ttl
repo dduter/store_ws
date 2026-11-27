@@ -1,0 +1,17 @@
+@prefix : <http://store.cobot/ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://store.cobot/ontology> a owl:Ontology .
+
+:Product a owl:Class .
+:Snack a owl:Class ; rdfs:subClassOf :Product .
+:Drink a owl:Class ; rdfs:subClassOf :Product .
+:Candy a owl:Class ; rdfs:subClassOf :Product .
+
+:hasCategory a owl:DatatypeProperty ; rdfs:domain :Product ; rdfs:range xsd:string .
+:hasColor a owl:DatatypeProperty ; rdfs:domain :Product ; rdfs:range xsd:string .
+:hasFlavor a owl:DatatypeProperty ; rdfs:domain :Product ; rdfs:range xsd:string .
+:hasStatus a owl:DatatypeProperty ; rdfs:domain :Product ; rdfs:range xsd:string .

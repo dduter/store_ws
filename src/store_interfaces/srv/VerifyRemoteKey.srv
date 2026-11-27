@@ -1,0 +1,5 @@
+string admin_key
+bool enable_remote
+---
+bool granted
+string reason

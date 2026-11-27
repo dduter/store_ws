@@ -1,0 +1,24 @@
+# Host Python Dependencies (venv --system-site-packages, numpy<2)
+numpy<2
+opencv-python<4.11
+scipy
+pydantic>=2.0
+openai>=1.30.0
+pyyaml
+pytest
+
+# Voice & Knowledge Graph
+openwakeword
+rdflib
+networkx
+
+# RealSense (Host)
+pyrealsense2
+
+# Web UI (FastAPI)
+fastapi
+uvicorn[standard]
+websockets
+
+# Remote Hand Tracking (후순위)
+mediapipe

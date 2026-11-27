@@ -1,0 +1,29 @@
+# Secrets & Local Env
+.env
+
+# ROS 2 Build Artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Model Weights & Large Data
+*.pt
+!runs/pepero_postick_train/weights/best.pt
+*.onnx
+*.engine
+data/snapshots/*
+!data/snapshots/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+
+# Calibration (optional per-machine)
+config/calibration/*.npy
+!config/calibration/.gitkeep

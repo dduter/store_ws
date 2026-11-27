@@ -1,0 +1,12 @@
+string track_id
+string product_name
+string yolo_class
+bool is_backside
+float32 confidence
+int32[4] bbox_px
+float64[4] pose_3d_base
+float32 grasp_width_mm
+uint8 depth_layer
+string expiration_raw
+string status
+string disposal_reason

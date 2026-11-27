@@ -1,0 +1,7 @@
+string zone
+bool run_vlm_inspection
+---
+bool success
+string error_code
+DetectedProduct[] products
+ContainerPose[] containers

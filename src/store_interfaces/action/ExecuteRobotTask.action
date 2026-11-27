@@ -1,0 +1,14 @@
+string action_type
+float64[4] target_pose
+float64[4] dest_pose
+string product_category
+float32 grasp_width_mm
+float32 grasp_force_n
+---
+bool success
+bool stopped_for_safety
+string error_code
+float64[4] final_pose
+---
+string stage
+float32 progress

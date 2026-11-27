@@ -1,0 +1,30 @@
+# 단일 테이블 5개 구역 & 물리 안전 한계 (Day 1 오전 실측 확정)
+safety:
+  z_min_mm: 15.0
+  safe_transit_z_mm: 280.0
+  j6_min_deg: -150.0
+  j6_max_deg: 150.0
+
+poses:
+  home: [350.0, 0.0, 350.0, 0.0, 180.0, 0.0]
+  scan_inspect: [420.0, 0.0, 380.0, 0.0, 180.0, 0.0]
+  scan_inbound: [420.0, 220.0, 380.0, 0.0, 180.0, 0.0]
+
+zones:
+  display:
+    roi_x_mm: [300.0, 580.0]
+    roi_y_mm: [-200.0, 150.0]
+  checkout_bin:
+    default_pose: [250.0, -300.0, 180.0, 0.0]
+  disposal_bin:
+    default_pose: [250.0, 300.0, 180.0, 0.0]
+  inbound_box:
+    roi_x_mm: [320.0, 540.0]
+    roi_y_mm: [160.0, 350.0]
+  temp_buffer_slot:
+    slots:
+      - [500.0, -250.0, 80.0, 0.0]
+      - [500.0, -320.0, 80.0, 0.0]
+      - [560.0, -250.0, 80.0, 0.0]
+  cigarette_zone:
+    default_pose: [220.0, -180.0, 120.0, 0.0]
