@@ -60,11 +60,19 @@ def test_two_stage_flip(guard, rz, target_z):
     assert points[5].pose[2] == target_z + 20
     assert points[3].pose[2] > points[5].pose[2] > points[1].pose[2]
     assert points[13].pose[:3] == [350, 20, target_z]
-    assert points[4].orientation_zyz == points[12].orientation_zyz == [-rz, 90, 0]
+    assert points[0].orientation_zyz == [0.0, 180.0, rz]
+    assert points[3].orientation_zyz == [0.0, 180.0, 0.0]
+    assert points[4].orientation_zyz == points[12].orientation_zyz == [90.0, 90.0, 90.0]
     assert [point.stage for point in points if point.check_grip] == ["grasp", "grasp_stage2"]
     assert [point.stage for point in points if point.action == "release"] == [
         "release_stage1", "release_flipped",
     ]
+
+
+def test_two_stage_flip_negative_y_tilts_toward_negative_y(guard):
+    points = plan_two_stage_flip([350, -100, 40, 30], guard)
+    assert points[4].orientation_zyz == points[12].orientation_zyz == [-90.0, 90.0, -90.0]
+    assert points[8].pose[:2] == [350, -135]
 
 
 @pytest.mark.parametrize("target_z", [311.0, 390.0, 400.0])

@@ -119,8 +119,8 @@ def test_all_actions(node, action, tmp_path):
             "descend_stage2", "grasp_stage2", "lift_stage2", "lay_down_180",
             "place_flipped", "release_flipped", "retreat",
         ]
-        assert list(result.final_pose) == [350, 20, 260, 0]
-        assert node._robot.get_current_joints()[5] == 0
+        assert list(result.final_pose) == [350, 20, 260, 90]
+        assert -150 < node._robot.get_current_joints()[5] < 150
     else:
         assert handle.feedback == [
             "open_gripper", "approach", "descend", "grasp", "lift",
@@ -504,4 +504,4 @@ def test_two_stage_flip_from_measured_home(node, monkeypatch, rz):
     result = run_goal(node, GoalHandle("reorient", target=[*TARGET[:3], rz]))
     assert result.success
     assert recorded_j6 and all(-150 < j6 < 150 for j6 in recorded_j6)
-    assert node._robot.get_current_pose_6d() == [350, 20, 260, -rz, 90, 0]
+    assert node._robot.get_current_pose_6d() == [350, 20, 260, 90, 90, 90]

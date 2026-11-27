@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from math import cos, isfinite, radians, sin
+from math import isfinite
 from typing import Optional
 
 from .safety_guard import SafetyGuard
@@ -87,20 +87,21 @@ def plan_two_stage_flip(target_pose, safety_guard: SafetyGuard, flip_lift_delta_
             "OUT_OF_REACH", "반전과 재파지에 필요한 상승 여유를 확보할 수 없습니다.",
         )
 
-    # ZYZ 하향 자세 (0, 180, rz)는 (-rz, 180, 0)과 동일합니다.
-    # 두 번 모두 같은 월드 축을 중심으로 180도에서 90도로 기울입니다.
-    # 중간에 물체를 내려놓고 위에서 다시 잡아 물체에는 두 회전이 누적됩니다.
-    top_down = [0.0, 180.0, rz]
-    tilted = [-rz, tilt_ry_deg, 0.0]
-    angle = radians(rz)
-    x_re = x + sin(angle) * reapproach_offset_mm
-    y_re = y + cos(angle) * reapproach_offset_mm
-    if not guard.validate_pose([x_re, y_re, lift_z, rz]).ok:
+    # 실물 M0609 + RG2(240mm)는 전방(+X) 90° 기울기 시 J3(>160°) 또는 J5(>135°) 한계에 걸립니다.
+    # 들어올릴 때 하향 기준(0, 180, 0)으로 정렬한 뒤, 로봇 중심 방향으로 손목이 접히도록
+    # 측면(±Y, ZYZ=(±90, 90, ±90)) 90° 기울기를 두 번 누적해 180° 반전을 수행합니다.
+    side = 1.0 if y >= 0.0 else -1.0
+    top_down_pick = [0.0, 180.0, rz]
+    top_down_flip = [0.0, 180.0, 0.0]
+    tilted = [side * 90.0, tilt_ry_deg, side * 90.0]
+    x_re = x
+    y_re = y + side * reapproach_offset_mm
+    if not guard.validate_pose([x_re, y_re, lift_z, 0.0]).ok:
         x_re, y_re = x, y
 
     def waypoint(stage, px, py, z, orientation, action="move_linear"):
         # J6는 하향 기준 자세를 기준으로 추정하며, 실행 중에는 실제 관절도 확인합니다.
-        j6 = rz if orientation is top_down else 0.0
+        j6 = rz if orientation is top_down_pick else 0.0
         pose = [px, py, z, orientation[2]]
         check = guard.validate_pose(pose)
         if not check.ok:
@@ -110,18 +111,18 @@ def plan_two_stage_flip(target_pose, safety_guard: SafetyGuard, flip_lift_delta_
         return MotionWaypoint(stage, pose, j6, orientation.copy(), action, action == "grasp")
 
     return [
-        waypoint("approach", x, y, transit_z, top_down),
-        waypoint("descend", x, y, z_grasp, top_down),
-        waypoint("grasp", x, y, z_grasp, top_down, "grasp"),
-        waypoint("lift_stage1", x, y, lift_z, top_down),
+        waypoint("approach", x, y, transit_z, top_down_pick),
+        waypoint("descend", x, y, z_grasp, top_down_pick),
+        waypoint("grasp", x, y, z_grasp, top_down_pick, "grasp"),
+        waypoint("lift_stage1", x, y, lift_z, top_down_flip),
         waypoint("tilt_90", x, y, lift_z, tilted),
         waypoint("place_standing", x, y, z_stand, tilted),
         waypoint("release_stage1", x, y, z_stand, tilted, "release"),
         waypoint("retreat_stage1", x, y, lift_z, tilted),
-        waypoint("reapproach_stage2", x_re, y_re, lift_z, top_down),
-        waypoint("descend_stage2", x_re, y_re, z_stand, top_down),
-        waypoint("grasp_stage2", x_re, y_re, z_stand, top_down, "grasp"),
-        waypoint("lift_stage2", x_re, y_re, lift_z, top_down),
+        waypoint("reapproach_stage2", x_re, y_re, lift_z, top_down_flip),
+        waypoint("descend_stage2", x_re, y_re, z_stand, top_down_flip),
+        waypoint("grasp_stage2", x_re, y_re, z_stand, top_down_flip, "grasp"),
+        waypoint("lift_stage2", x_re, y_re, lift_z, top_down_flip),
         waypoint("lay_down_180", x, y, lift_z, tilted),
         waypoint("place_flipped", x, y, z_grasp, tilted),
         waypoint("release_flipped", x, y, z_grasp, tilted, "release"),

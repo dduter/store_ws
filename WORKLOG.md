@@ -303,3 +303,21 @@
 ### Verification & Review
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.31s`).
 - `pytest -q src/store_robot_control/tests` → **109 passed**.
+
+## 2026-11-27 11:43 — 실물 M0609 역기구학 실측 기반 `two_stage_flip` 측면(`±Y`) 반전 수정
+
+### Goal / Background
+- 실물 M0609 + RG2(240 mm)에서 `reorient` 첫 테스트 시 `open_gripper → approach → descend → grasp → lift_stage1`까지 정상 동작 후, `tilt_90`의 전방(`+X`, `ZYZ=(0, 90, 0)`) 기울기에서 두산 컨트롤러가 `NOT REACHABLE`을 반환했고, 새로 추가한 SO(3) 회전 도달 가드가 `회전 오차 90.0deg > 10.0deg` → `OUT_OF_REACH`로 안전하게 차단함.
+- 실물 `dsr_controller2`의 `/dsr01/dsr_controller2/motion/ikin`을 읽기 전용으로 조회한 결과, 전방(`+X`) 90° 기울기 시 RG2 길이 때문에 손목 플랜지가 `x=110 mm`로 접히며 `J3=162.2°`(M0609 한계 `±160°` 초과), 후방(`-X`) 기울기 시 `J5=167.1°`(한계 `±135°` 초과)에 걸리는 반면, 측면(`±Y`, `ZYZ=(±90, 90, ±90)`) 기울기는 `ry=180°→90°` 연속 경로 전체에서 모든 관절(`J1~J6`)이 안전 범위 내에 머무름을 확인함.
+
+### Responsible Agent(s)
+- **Antigravity**: 실물 M0609 `ikin` 워크스페이스·연속 경로 전수 조사, `plan_two_stage_flip()` 측면(`±Y`) 반전 알고리즘 수정 및 단위 테스트 갱신, 재빌드·110개 테스트 검증·푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_two_stage_flip()`에서 파지 후 상승(`lift_stage1`) 시 하향 기준 `(0, 180, 0)`으로 정렬하고, `y >= 0`이면 `+Y` (`ZYZ=(+90, 90, +90)`), `y < 0`이면 `-Y` (`ZYZ=(-90, 90, -90)`) 방향으로 손목이 로봇 중심 쪽으로 접히도록 90°+90° 2단계 반전 경로 변경.
+- `/home/yongsoo/store_ws/src/store_robot_control/tests/test_reorient_motion.py`, `test_executor_dry_run.py`: 측면 반전 및 음수 `y` 방향 대칭 테스트 추가·갱신.
+
+### Verification & Review
+- 실물 M0609 `ikin` 연속 경로(`ry=180°→90°` @ `(350, 20, 260)`) 확인: `J2=-1.2°→29.7°`, `J3=79.1°→99.2°`, `J5=102.1°→123.6°`, `J6=2.3°→-48.8°` (전 구간 단조·안전).
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.35s`).
+- `pytest -q src/store_robot_control/tests` → **110 passed**.
