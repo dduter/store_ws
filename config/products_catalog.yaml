@@ -63,4 +63,20 @@ categories:
 #     grasp_width_mm: 25.0
 #     open_width_mm: 100.0
 #     grasp_force_n: 18.0
-products: {}
+products:
+  # 실측: 88 x 162 mm (실물 180° 반전 성공 확정값: 3.0N / 84.0mm 중력 힌지)
+  pepero_almond:
+    category: "paper_box"
+    reorient_mode: "back_tilt_vertical_flip"
+    vertical_edge_offset_mm: 65.0
+    open_width_mm: 108.0
+    grasp_width_mm: 84.0
+    grasp_force_n: 3.0
+    grasp_depth_offset_mm: 15.0
+  # 실측: 가로 150 mm(추정) x 세로 225~235 mm (RG2 최대 폭 110 mm이므로 세워 잡기/중앙·모서리 집기 기준, 두께 실측 후 보정)
+  postick:
+    category: "snack_bag"
+    open_width_mm: 110.0
+    grasp_width_mm: 20.0
+    grasp_force_n: 12.0
+    grasp_depth_offset_mm: 25.0

@@ -20,6 +20,15 @@ reorient:
   pivot_tilt_deg: 35.0
   drag_forward_mm: 55.0
   release_z_offset_mm: 25.0
+  back_tilt_deg: 30.0
+  vertical_mid_tilt_deg: 0.0
+  vertical_fwd_tilt_deg: 45.0
+  vertical_edge_offset_mm: 65.0
+  vertical_mid_y_offset_mm: 0.0
+  vertical_sweep_y_mm: 145.0
+  vertical_lift_delta_mm: 165.0
+  vertical_mid_z_delta_mm: 145.0
+  vertical_release_z_delta_mm: 115.0
 
 gripper:
   type: "rg2"

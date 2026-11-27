@@ -458,3 +458,202 @@
 ### Verification & Review
 - `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.32s`).
 - `pytest -q src/store_robot_control/tests` → **175 passed**.
+
+
+## 2026-11-27 15:02 — 실물 상품 2종 (`pepero_almond`, `postick`) 카탈로그 등록
+
+- **Goal / Background**:
+  - 실물 상품 단독 테스트를 위해 사용자 실측 치수(`빼빼로 아몬드맛 88×162 mm`, `포스틱 가로 150 mm 추정 × 세로 225~235 mm`)를 `products_catalog.yaml`의 `products:` 오버라이드 섹션에 선반영.
+  - 앞서 검토한 `80° movej` 특이점 우회 변경은 실물 상품 기반 튜닝 전까지 안정 확인된 `35°`(`20f7c10`) 상태를 유지하기로 결정해 미커밋 변경을 원복.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 실물 M0609 `ikin`/`fkin` 기구학 시뮬레이션(80° 2단계 `movej` vs 20° 소각도), 35° 원복, 상품 2종 파라미터 계산·등록 및 단위 테스트 보강.
+  - **Codex**: 80° 2단계 `movej` 프로토타입 구현(184/184 테스트 통과)을 수행했으나 사용자 요청으로 35° 기준 원복.
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/products_catalog.yaml`: `products:` 하위에 `pepero_almond` (`open_width_mm: 108.0`, `grasp_width_mm: 68.0`, `grasp_force_n: 20.0`, `grasp_depth_offset_mm: 15.0`) 및 `postick` (`open_width_mm: 110.0`, `grasp_width_mm: 20.0`, `grasp_force_n: 12.0`, `grasp_depth_offset_mm: 25.0`) 추가.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_grasp_planner.py`: `test_measured_product_overrides` 테스트 추가.
+- **Verification & Review**:
+  - `pytest -q src/store_robot_control/tests/test_grasp_planner.py` → **11 passed** (0.06s).
+- **Follow-ups / Caveats**:
+  - 포스틱 가로 폭이 150 mm(15 cm)라면 RG2 최대 벌림 폭(110 mm)을 초과하므로 눕힌 상태 가로 집기는 불가 — 세워 잡기(두께 방향) 또는 좁은 모서리/중앙 집기 검증 필요.
+  - 두 상품의 바닥 기준 높이/두께(Depth, mm) 실측 후 `grasp_depth_offset_mm` 최종 보정 예정.
+
+
+## 2026-11-27 15:15 — 빼빼로 1차 실물 파지 피드백 보정 (파지력·폭 완화 및 z_min_mm 조정)
+
+- **Goal / Background**:
+  - 실물 `pepero_almond` 1차 `pick_place` 테스트(`[275.7, -11.5, -12.0, 0.0] → [480.8, -76.9, -12.0, 0.0]`)가 깔끔하게 성공했으나, `20 N / 68 mm` 설정으로 종이상자가 구겨졌고 파지 시 Z축을 더 내려 안정적으로 감싸 잡을 필요가 있다는 실측 피드백을 반영.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 실물 피드백 기반 파라미터 조정, 단위 테스트 갱신 및 검증.
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/products_catalog.yaml`: `pepero_almond`의 `grasp_force_n`을 `20.0 → 10.0 N`으로 절반 완화하고, `grasp_width_mm`을 `68.0 → 78.0 mm`(실측 88 mm 대비 10 mm 여유)로 상향해 상자 구겨짐을 이중 방지.
+  - `/home/yongsoo/store_ws/config/workspace_zones.yaml`: `safety.z_min_mm`을 `-13.785 → -18.5 mm`로 조정(실측 바닥 ~`-23.8 mm` 대비 안전 여유 약 `5.3 mm` 유지, `Z = -16~-17 mm` 하강 파지 허용).
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_grasp_planner.py`: `pepero_almond` 기대값 갱신.
+- **Verification & Review**:
+  - `pytest -q src/store_robot_control/tests/test_grasp_planner.py src/store_robot_control/tests/test_safety_guard.py` 통과 확인.
+- **Follow-ups / Caveats**:
+  - `executor_node` 재기동 후 `Z = -16.0`~`-17.0 mm`로 빼빼로 2차 `pick_place` 및 `reorient` 실물 테스트 진행 예정.
+
+- **보수 조정 (15:18)**: 사용자 안전 요청에 따라 `workspace_zones.yaml`의 `z_min_mm`을 `-18.5 → -16.5 mm`(바닥 대비 여유 약 `7.3 mm`)로 `+2.0 mm` 상향.
+
+
+## 2026-11-27 15:29 — 빼빼로 2차 실물 파지 보정 (`5 N / 82 mm / z_min -18.0 mm`) 및 90° 세워 뒤집기 기구학 검증
+
+- **Goal / Background**:
+  - `pepero_almond` 2차 `pick_place`(`Z=-14.5 mm`, `10 N / 78 mm`) 성공 후, 힘을 더 빼고 Z를 조금 더 내리려는 피드백을 반영.
+  - 동시에 `35° edge_pivot_flip`이 납작한 빼빼로 상자를 전혀 뒤집지 못한 원인을 분석하고, 실물 M0609 `ikin`/`fkin`으로 공중 저속 `movej` 측면 90° 세우기(`sol=2`, `J1=-46.6°, J5=+107~120°`, `Z=200→10 mm` 수직 하강)의 무특이점 도달성을 확인.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 파라미터 2차 보정, 실물 M0609 측면 90° `ikin`/`fkin` 검증, 단위 테스트 확인.
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/products_catalog.yaml`: `pepero_almond` `grasp_force_n` `10.0 → 5.0 N`, `grasp_width_mm` `78.0 → 82.0 mm`.
+  - `/home/yongsoo/store_ws/config/workspace_zones.yaml`: `safety.z_min_mm` `-16.5 → -18.0 mm`.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_grasp_planner.py`: 기대값 갱신.
+- **Verification & Review**:
+  - `pytest -q src/store_robot_control/tests/test_grasp_planner.py src/store_robot_control/tests/test_safety_guard.py` 통과 확인.
+- **Follow-ups / Caveats**:
+  - 사용자와 새 뒤집기 전략(공중 저속 `movej` 90° 2단계 세워 뒤집기 vs 벽면/지그 보조 반전) 합의 후 구현 예정.
+
+- **3차 파지력 보정 (15:42)**: `products_catalog.yaml`의 `pepero_almond`를 RG2 하드웨어 최소 힘 **`3.0 N`** + 폭 **`84.0 mm`**(88 mm 상자 대비 4 mm)로 추가 완화 (`test_grasp_planner.py` 11 passed).
+
+
+## 2026-11-27 16:18 — 모드 A 세로 뒤집기 (`back_tilt_vertical_flip`) 구현 및 리뷰 보완
+
+- **Goal / Background**:
+  - 납작한 빼빼로 상자(`88 × 162 × 25 mm`)를 재파지 없이 1회 파지로 세로(길이방향) 180° 뒤집기 위해, 사용자 아이디어(손목 `J5`를 뒤로 눕혀 상단 끝을 잡고 들어 올린 뒤 반대쪽까지 조향해 전복)를 실물 M0609 기구학으로 검증하고 `back_tilt_vertical_flip` 모드로 구현.
+  - 실물 M0609 `/dsr01` `ikin`/`fkin` 사전 검증 결과, `뒤로 -35° 파지 → 공중 +40° 경유(Z=220 mm) → 앞쪽 +75° sol=3 movej(총 110° 회전)` 조합이 4개 작업 위치 모두에서 `J3 ≤ 148.2°`, `J5 ∈ [+124.5°, -59.8°]`, `J4/J6 변동 < 2°`, 중간 `Z` 꺼짐 없이 통과함을 확인.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 실물 M0609 `ikin`/`fkin` 전체 궤적·관절 여유 검증, 인터랙티브 시뮬레이션 작성, diff 감사 중 실기 `retreat` ZYZ 래핑 오탐 및 `ref_joints` 원거리 시작 엣지케이스 발견, Codex 리뷰 3건과 함께 총 5건 일괄 수정 및 최종 빌드/테스트 검증.
+  - **Codex**: `back_tilt_vertical_flip` 초기 구현(`reorient_motion.py`, `dsr_interface.py`, `executor_node.py`, YAML 설정, 단위 테스트) 및 `codex exec review --uncommitted` 교차 코드 리뷰 수행.
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/control_params.yaml`: `reorient:` 하위에 `back_tilt_deg: 35.0`, `vertical_mid_tilt_deg: 40.0`, `vertical_fwd_tilt_deg: 75.0`, `vertical_edge_offset_mm: 45.0`, `vertical_lift_delta_mm: 150.0`, `vertical_mid_z_delta_mm: 210.0`, `vertical_release_z_delta_mm: 95.0` 추가.
+  - `/home/yongsoo/store_ws/config/products_catalog.yaml`: `products.pepero_almond`에 `reorient_mode: "back_tilt_vertical_flip"` 적용(기존 파지값 `108/84/3.0/15.0` 유지).
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: 순수 Python `plan_back_tilt_vertical_flip()` 추가 (9개 웨이포인트 계획 및 각도 합 `≥ 95°`·작업범위·J6 사전 검증).
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/hardware/dsr_interface.py`: `solve_continuous_ik()` 추가 (팔꿈치 분기 유지, 관절 변화량·한계 필터, `j6_limits` 사전 필터링, `fkin` 위치·자세 오차 교차 검증).
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: `_check_joint_path_fkin()` 및 `_execute_back_tilt_vertical_flip()` 추가. 실행 전 모든 IK(`ref`, `app`, `grp`, `mid`, `end`, `retreat`)와 모든 관절 경로 FK를 사전 검증하며, `approach_back` 수직 상승 후 실제 관절 → `j_app` 경로 FK도 실행 직전 검증. `retreat`도 관절 공간 `move_joint(j_retreat)`로 통합해 비하향 `ry≈-140°`에서의 ZYZ J6 오탐 원천 차단, 드라이런 시 시뮬레이션 TCP 자세 갱신.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_reorient_motion.py`, `test_executor_dry_run.py`, `test_grasp_planner.py`: `back_tilt_vertical_flip` 계획·실행·사전 차단·`approach_back` FK 차단·`j6_limits` 필터·파지 실패 시 관절 복귀 단위 테스트 추가.
+- **Verification & Review**:
+  - `codex exec review --uncommitted` 주요 지적 3건(P1 접근 경로 FK 검증 누락, P2 `solve_continuous_ik` J6 사전 필터, P2 드라이런 TCP 자세 갱신) + Antigravity 자체 감사 2건(`ref_joints` 원거리 시작 J1/J6 여유, `retreat` ZYZ 래핑 오탐 방지) 모두 수정 완료.
+  - `colcon build --symlink-install --packages-select store_robot_control` 성공 및 `pytest -q src/store_robot_control/tests/` → **199 passed** (3.99s), `git diff --check` 통과.
+- **Follow-ups / Caveats**:
+  - 실물 M0609에서 `pepero_almond`로 `back_tilt_vertical_flip` 테스트 후 실제 뒤집힘 각도(`vertical_fwd_tilt_deg` / `vertical_release_z_delta_mm`) 및 앞쪽 공간 여유 확인 예정.
+
+
+## 2026-11-27 16:51 — `back_tilt_vertical_flip`을 사용자 실측 `J4` 상하(Y–Z 롤) 방향으로 전환 및 2차 리뷰 보완
+
+- **Goal / Background**:
+  - 실물 테스트 시 `J5` 기반 틸트(X–Z 평면)가 사용자 시선에서 좌우로 눕는 문제를 확인. 사용자가 직접 교시로 찍은 자세(`[283.7, -90.1, -19.0], ZYZ=[89.5, -152.3, 89.0], J4=-31.2°, J5=+60.3°`)를 기준으로 **사용자 시선 상하(Y–Z 평면, `J4` 롤)** 로 전환하고, 기존 픽앤플레이스 타겟 좌표(`[275.7, -11.5]`) 제자리에서 반전하도록 수정.
+  - 실물 M0609 `/dsr01` `ikin`/`fkin`으로 4개 위치(`Target A [275.7,-11.5,-15.5]`, `Dest B [480.8,-76.9,-15.5]` 포함) 전체 검증 결과: `J5 ∈ [+62.8°, +119.0°]`(특이점 0%), `J3 ≤ 128.8°`, `J6 ∈ [-72.8°, +38.2°]`, 제자리 X/Y 유지 확인.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 사용자 실측 자세 분석, 실물 M0609 `J4` Y–Z 롤 4점 기구학 검증, `reorient_motion.py`/`executor_node.py`/`control_params.yaml` 전환, Codex 2차 리뷰 지적 2건 반영 및 전체 테스트 검증.
+  - **Codex**: `codex exec review --uncommitted` 2차 교차 리뷰 수행 (P1: `rz` 회전 시 끝단 오프셋 불일치 및 범위 가드, P2: `mock_robot.py` `back_tilt_vertical_flip` 미지원 지적).
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/control_params.yaml`: `back_tilt_deg: 30.0`, `vertical_mid_tilt_deg: 0.0`, `vertical_fwd_tilt_deg: 85.0` (총 `115°`), `vertical_edge_offset_mm: 65.0`, `vertical_lift_delta_mm: 165.0`, `vertical_mid_z_delta_mm: 215.0`, `vertical_release_z_delta_mm: 90.0`.
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_back_tilt_vertical_flip()`을 `-Y` 상단 끝 파지 + 제자리 `[x, y]` 반전으로 전환, `|rz| <= 30°` 가드 및 `rz` 회전 반영 오프셋 적용.
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`: Y–Z 롤 ZYZ 자세(`[90, -(180-back), 90+rz]` → `[0, 180, rz]` → `[90, 180-fwd, 90+rz]`) 및 `roll_deltas` 연속 IK 적용.
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/mock_robot.py`: `back_tilt_vertical_flip` 허용 및 웨이포인트 계획 연결.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_reorient_motion.py`, `test_executor_dry_run.py`: `J4` Y–Z 롤 기대값, `rz` 회전/거부 테스트, `MockRobot` 회귀 테스트 추가.
+- **Verification & Review**:
+  - `colcon build --symlink-install --packages-select store_robot_control` 성공 및 `pytest -q src/store_robot_control/tests/` 전체 통과.
+- **Follow-ups / Caveats**:
+  - 실물 M0609에서 자동 모드(`robot_mode=1`) 전환 후 `pepero_almond`로 `[275.7, -11.5, -15.5, 0.0]` 실기 테스트 예정.
+
+
+## 2026-11-27 17:12 — `3.0 N` 중력 힌지 + `+Y` 지렛대 넘기기(`vertical_sweep_y_mm`) 적용
+
+- **Goal / Background**:
+  - 실물 테스트 영상(`IMG_4448.MOV`) 분석 결과, `3.0 N / 84 mm`의 가벼운 파지 덕분에 들어 올릴 때 중력만으로 빼빼로가 구겨짐 없이 `~70°(\)`까지 자연스럽게 늘어졌으나, `Y` 고정 상태로 `Z=75 mm` 하강 시 하단 모서리가 `+Y` 바닥에 먼저 걸려 90°를 못 넘었던 문제를 해결.
+  - 사용자가 선호한 **중력 힌지 회전(`3.0 N`)** 을 유지하면서 `mid_upright`(`Z=130 mm` 바닥 살포시 착지) → `flip_over`(`+Y`로 `+145 mm` 넘기며 `Z=75 mm`, `+65°` 롤)로 바닥 모서리를 지렛대 축으로 삼아 `90°→135°(/)`를 강제 통과하도록 개선.
+- **Responsible Agent(s)**:
+  - **Antigravity**: 실물 영상 프레임 추출·분석, 중력 힌지 + `+Y` 넘기기 비교 시뮬레이션 작성, `control_params.yaml`·`reorient_motion.py`·`executor_node.py`·`mock_robot.py`·테스트 반영 및 빌드/검증.
+- **Detailed Changes**:
+  - `/home/yongsoo/store_ws/config/control_params.yaml`: `vertical_sweep_y_mm: 145.0` 추가, `vertical_mid_z_delta_mm: 215.0 → 145.0` (`Z=130 mm` 착지), `vertical_fwd_tilt_deg: 85.0 → 65.0` (완만한 `+65°` 롤).
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_back_tilt_vertical_flip()`에 `sweep_y_mm` 추가(`rz` 회전 반영, 작업영역 경계·음수 검증) 및 `mid_z` 하한 `130.0 mm` 조정.
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`, `mock_robot.py`: `vertical_sweep_y_mm` 파라미터 전달 연동.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_reorient_motion.py`, `test_executor_dry_run.py`: `sweep_y_mm` 기대값, `rz=25°` 회전 넘기기 좌표, `y_max` 경계/음수 거부 테스트 추가.
+- **Verification & Review**:
+  - `colcon build --symlink-install --packages-select store_robot_control` 성공 및 전체 `pytest` 통과 (`git diff --check` clean).
+- **Follow-ups / Caveats**:
+  - 실물 M0609에서 비상정지 해제 → `roboton` 기동 → `pepero_almond` 실물 테스트 후, 바닥 미끄러짐 여부와 `+Y` 넘김 거리(`vertical_sweep_y_mm`) 미세 조정 예정.
+
+- **방향 A 부호 수정 & 놓는 높이 상향 (17:30)**: 방향 A(`-Y` 파지 → `+Y` 넘기기)와 일치하도록 `fwd_orientation`을 `/` 방향(`ry = -(180 - 45) = -135°`)으로 수정하고, 바닥 간섭 방지를 위해 `vertical_release_z_delta_mm`을 `90 → 115 mm` (`Z=100 mm`)로 상향.
+
+- **1차 실물 180° 반전 성공(`IMG_4450.MOV`) 후 대칭·이동거리 미세 튜닝 (17:36)**: `pepero_almond.grasp_width_mm` `84.0 → 85.5 mm` (3.0 N 최소 힘 유지하며 저마찰 힌지 강화), `vertical_edge_offset_mm` `65 → 55 mm` (양옆 대칭 파지), `vertical_sweep_y_mm` `145 → 105 mm`, `vertical_fwd_tilt_deg` `45 → 35°`.
+
+- **Y축 직선 `movel` + Z축 순응제어 시험 적용 (17:43)**: `dsr_interface.py`에 `enable_z_compliance(stiffness_z=500.0)` / `release_compliance()` 추가, `executor_node.py`의 `mid_upright` 및 `flip_over`를 관절 호(`movej`)에서 Y축 직선 `movel` + `try...finally` Z축 순응제어로 전환해 X축 우회 제거.
+
+- **성공 확정 `IMG_4450.MOV` 조합 복원 (17:46)**: `movel` 직선 하강 및 축소 이동(`55/105/35°/85.5mm`) 시 90° 직립 상자를 쳐서 원복되는 현상 확인 → 180° 반전이 실물 검증된 `movej` 곡선 + `84.0 mm / 3.0 N` + `edge=65, sweep=145, fwd=45°` 조합으로 즉시 복원.
+
+- **제자리 착지 및 `+Y` 침범 방지 오프셋(`vertical_mid_y_offset_mm: -135.0`) 추가 (17:49)**: `mid_upright`를 `-Y`로 `-135 mm`(`Y=-146.5`) 당긴 뒤 동일하게 `+145 mm` 넘겨 최대 `Y=-1.5 mm`로 노트북 작업공간(`+Y`) 침범을 없애고 원래 타겟 위치(`-11.5 mm`) 제자리에 180° 착지하도록 개선.
+
+- **파지점 `-Y` 추가 이동 (17:51)**: `control_params.yaml`의 `vertical_edge_offset_mm`을 `65.0 → 74.0 mm` (`Y=-85.5 mm`, 상자 끝 81 mm 대비 7 mm 안쪽)로 이동해 중력 회전 지렛대 극대화.
+
+- **파지점 `65.0 mm` 복원 (17:53)**: `74.0 mm` 끝 모서리 접합부는 강성이 높아 힌지 회전이 막힘을 확인 → 부드럽게 회전했던 `65.0 mm`로 복원 (`vertical_mid_y_offset_mm: -135.0` 제자리 착지는 유지).
+
+- **제자리 당김 반동 제거 (`vertical_mid_y_offset_mm: -135.0 → -60.0`) (17:57)**: `-135 mm` 적용 시 `lift_back(-76.5) → mid(-146.5)` 구간에서 `-Y` 역방향 반동 및 `J1` 변화로 원복 현상 발생 → `lift_back`과 거의 일치하는 `-60.0 mm` (`Y_mid=-71.5`, `Y_end=+73.5`)로 조정해 반동 제거 및 `+Y` 침범 60 mm 축소.
+
+- **`vertical_fwd_tilt_deg: 45 → 75°` 상향으로 90° 통과 여유 극대화 (18:00)**: `mid_y_offset=-60 mm`에서 `45°`는 90° 경계에 아슬아슬하게 걸림 → 실물 M0609 `ikin`/`fkin` 검증(`J3=97.5°, J5=+112.6°, minZ=87.3 mm`) 후 `75°` (`sweep_y=150 mm`, `release_z_delta=120 mm`)로 상향 및 `roll_deltas` J1/J6 여유 확대.
+
+- **순응제어 바닥 접촉 감지(`touchdown_compliant`) + `75° movej` 하이브리드 구현 (18:04)**: `dsr_interface.py`에 `get_tool_force_z()` 및 `descend_until_z_contact()`(`400 N/m` Z축 순응제어 + `8 mm` 스텝 `movel` + 공중 영점 대비 `ΔFz >= 4.0 N` 접촉 시 즉시 정지, `finally` 자동 해제) 추가, `executor_node.py`의 `mid_upright`(`Z≈155 mm`) 이후 `touchdown_compliant` → `flip_over`(`75° movej`) 하이브리드 시퀀스 구성.
+
+- **`IMG_4450.MOV` 성공 확정 버전 완전 복원 (18:09)**: 55 g 경량 종이상자 + 3 N 힌지 조합에서는 내장 토크 센서 반력 감지(`touchdown_compliant`)가 실효성이 낮음을 실물 검증 후 제거. `IMG_4450.MOV`에서 180° 반전이 검증된 순수 10단계 `movej` 버전(`edge=65, mid_y_offset=0.0, sweep_y=145, back=30°, fwd=45°, lift_delta=165, mid_z_delta=145, release_z_delta=115, 84mm/3N`)으로 완전 복원 (`dsr_interface.py` 순응/힘 헬퍼는 향후 중량 상품용으로 보존).
+
+- **제자리 2구간 반전 (`pre_swing_air` + `flip_pass`) 시험 적용 (18:16)**: `vertical_mid_y_offset_mm < -50.0`일 때 허공 `+Y` 예열(`pre_swing_air`, `Y=-11.5, Z=160`) → `-Y` 이동(`mid_upright`, `Y=-146.5, Z=135`) → 1구간 바닥 짚기(`flip_pass`, `Y=-85, Z=118, -18°`) → 2구간 살짝 누르며 넘기기(`flip_over`, `Y=+5, Z=102, -55°`) 시퀀스 추가 (`mid_y_offset=0.0` 시 기존 10단계 성공 버전 그대로 유지).
+
+- **옵션 A 제자리 복귀 반전 (`vertical_recenter_carry: true`) 적용 (18:27)**: 성공 확정 `IMG_4450.MOV` 반전 직후 `lay_flat`(Z=20 mm 완전히 눕히기) → `carry_back`(Z=45 mm 살짝 들어 `-Y` 95 mm 복귀) → `place_back`(Z=10 mm 내려놓기) → `release_flip` 시퀀스 추가 및 실물 M0609 `ikin`/`fkin` 사전 검증 완료.
+
+---
+
+## 2026-11-27 18:55 — 옵션 A(`vertical_recenter_carry`) 실기 실패로 `IMG_4450.MOV` 10단계 성공 버전 즉시 원복
+
+- **목표 / 배경**: 실기 테스트 결과 옵션 A(`lay_flat → carry_back → place_back`)가 `3.0 N` 약한 파지 및 기울어진 그리퍼 자세에서 제자리 복귀가 전혀 되지 않아, 사용자 요청에 따라 100% 검증된 `IMG_4450.MOV` 10단계 `back_tilt_vertical_flip` 버전으로 즉시 원복.
+- **담당 에이전트**: Antigravity 직접 수정 및 문법 검증.
+- **세부 변경 내역**:
+  - `config/control_params.yaml`: `vertical_recenter_carry: true` 항목 제거 (`back_tilt_deg: 30.0`, `vertical_mid_tilt_deg: 0.0`, `vertical_fwd_tilt_deg: 45.0`, `vertical_edge_offset_mm: 65.0`, `vertical_mid_y_offset_mm: 0.0`, `vertical_sweep_y_mm: 145.0`, `vertical_lift_delta_mm: 165.0`, `vertical_mid_z_delta_mm: 145.0`, `vertical_release_z_delta_mm: 115.0` 유지).
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`: `self._vertical_recenter_carry` 및 13단계 `lay_flat / carry_back / place_back` 분기 제거, 순수 10단계 `movej` 성공 시퀀스(`open_gripper → approach → descend → grip → lift → mid_upright → flip_over → release_flip → lift_after_flip → retreat`)로 복원.
+- **검증**: `python3 -m py_compile` + YAML 로드 확인.
+- **후속 조치**: 필요 시 뒤집은 직후 수직 재파지(`pick_place` 조합, 옵션 B) 또는 고정 Flip Zone 설계 검토.
+
+---
+
+## 2026-11-27 19:03 — 뒤집기 완료 후 수직 재파지 원위치 재정렬(`vertical_recenter_after_flip`, 옵션 B) 추가
+
+- **목표 / 배경**: 100% 성공한 `IMG_4450.MOV` 10단계 뒤집기 동작은 그대로 유지하면서, 뒤집혀 `+Y` 쪽에 착지한 상품을 수직 탑다운(`pick_place` 방식)으로 다시 집어 원래 `target_pose` 제자리로 복귀·정렬시키는 기능 추가.
+- **담당 에이전트**: Antigravity 구현 (`IMG_4450.MOV` 실제 프레임 `v2_2_52.jpg`/`v2_3_68.jpg` 착지 오프셋 `ΔY ≈ +140 mm` 실측 반영).
+- **세부 변경 내역**:
+  - `config/control_params.yaml`: `vertical_recenter_after_flip: true`, `vertical_recenter_y_offset_mm: 140.0` 추가.
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`:
+    - `1~9단계`는 기존 `IMG_4450.MOV` 성공 시퀀스 100% 유지(`open_gripper → ... → release_flip → lift_after_flip`).
+    - `10~17단계` 추가: 착지 예상 위치(`target + offset_y` along rotated `+Y`, `rz=0` 기준 `[275.7, +128.5, -15.5]`)로 수직 접근 → 하강 → `84 mm / 3.0 N` 수직 파지(`_verify_grasp` 포함, 평행 핑거 닫힘으로 약간의 틀어짐 자동 정렬) → `Z≈130 mm` 상승 → 원위치 수평 이동 → 하강 → 놓기 → `retreat`.
+    - 모든 착지/원위치 웨이포인트를 모션 시작 전에 `_checked_pose`로 사전 검증.
+- **검증**: `python3 -m py_compile` + YAML 로드 확인.
+- **후속 조치**: 실기 테스트 후 착지 오차에 따라 `vertical_recenter_y_offset_mm` 미세 조정 (`±10 mm` 단위).
+
+---
+
+## 2026-11-27 19:14 — `vertical_recenter_after_flip` 제거 및 `IMG_4450.MOV` 10단계 뒤집기 전용 버전 확정
+
+- **목표 / 배경**: 고정 오프셋(`+140 mm`) 수직 재파지는 뒤집기 착지 위치 변동으로 미파지가 발생하며, 실제 Vision+LLM 파이프라인에서는 `reorient → scan_pose(비전 재스캔) → pick_place` 폐루프로 재정렬하는 것이 정석이므로 사용자 요청에 따라 10단계 뒤집기 전용 버전으로 최종 복원.
+- **담당 에이전트**: Antigravity 직접 정리 및 문법 확인.
+- **세부 변경 내역**:
+  - `config/control_params.yaml`: `vertical_recenter_after_flip`, `vertical_recenter_y_offset_mm` 제거.
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`: 17단계 고정 재파지 분기 제거, 순수 10단계 `IMG_4450.MOV` 성공 시퀀스로 복원.
+- **검증**: `python3 -m py_compile` 통과.
+
+---
+
+## 2026-11-27 19:28 — 상품별 `vertical_edge_offset_mm` 지원, 단위 테스트 212개 동기화, Codex 2회 리뷰 반영 및 커밋/푸시
+
+- **목표 / 배경**: 실기 100% 성공한 빼빼로 아몬드맛 `back_tilt_vertical_flip` 10단계 버전을 안전하게 백업하고, 추후 다른 길이의 종이상자 상품이 추가되어도 상품별 편심 거리(`vertical_edge_offset_mm`)를 설정할 수 있게 확장하며, 전체 단위 테스트 및 크로스모델 코드 리뷰를 통과시켜 `main`에 커밋·푸시함.
+- **담당 에이전트**:
+  - **Codex (`codex exec -s workspace-write`)**: `GraspPlan`/`GraspPlanner`의 `vertical_edge_offset_mm` 옵션 추가 및 검증, `executor_node.py`/`mock_robot.py`/`products_catalog.yaml` 연결, 미사용 실험용 순응제어 메서드(`dsr_interface.py`) 정리, 단위 테스트 211개 동기화.
+  - **Codex (`codex exec review --uncommitted` 2회)**: 1차 리뷰 `[P1]`(회전 상품 `rz`에 대한 ZYZ 기울기 축 불일치) · `[P2]`(`MockRobot`의 `apply_grasp_depth_offset` 누락) 및 2차 리뷰 `[P1]`(`approach_back` FK 검사 직후 중단 상태 재확인 누락) 발견.
+  - **Antigravity**: Codex 리뷰 지적 3건 모두 수학적 검증(`zyz(90 - rz, -(180 - θ), 90)` ↔ `[0, 180, rz]` 연속성 오차 `1.7e-16`) 후 직접 수정, 회전 테스트 및 `MockRobot` 깊이 보정 테스트 추가, `colcon build` + `pytest` 212/212 최종 검증 및 Git 커밋·푸시.
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `pepero_almond`에 `vertical_edge_offset_mm: 65.0` 명시.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`: `GraspPlan.vertical_edge_offset_mm: float | None = None` 필드 및 유한 양수 검증 추가.
+  - `src/store_robot_control/store_robot_control/core/reorient_motion.py`: Doosan 하향 ZYZ `[0, 180, rz]` 공구 Y축(`+sin(rz), +cos(rz)`) 기준으로 `-Y` 끝단 파지·`+Y` 넘기기 오프셋 부호 정렬.
+  - `src/store_robot_control/store_robot_control/hardware/dsr_interface.py`: 미사용 실험용 순응제어 함수 4종 제거 (`solve_continuous_ik` 유지).
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`: 상품별 `vertical_edge_offset_mm` 오버라이드 적용, ZYZ 기울기 자세를 `[90 - rz, -(180 - tilt), 90]`으로 수정(`rz=0`일 때 `[90, -150/-135, 90]` 완전 동일), `approach_back()` FK 검사 직후 `_check_interruption(handle)` 재확인 추가.
+  - `src/store_robot_control/store_robot_control/nodes/mock_robot.py`: `apply_grasp_depth_offset` 파라미터·보정 로직을 `ExecutorNode`와 동일하게 적용 및 상품별 `vertical_edge_offset_mm` 반영.
+  - `src/store_robot_control/tests/test_grasp_planner.py`, `test_reorient_motion.py`, `test_executor_dry_run.py`: `IMG_4450.MOV` 실기 검증 기준(10단계, `ry=-135°`, `release_z_delta=115 mm`), 상품별 오프셋, `rz=25°` ZYZ 축 회전, `MockRobot` 깊이 보정 일관성 테스트 반영.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **212 passed**, Codex 리뷰 지적 전건 해결.
+- **후속 조치**: 나머지 실물 품목 2종(`포스틱`, `알로에농장`) 파지/재정렬 실측 및 비전·LLM 팀원 신규 싱크 항목 협의.

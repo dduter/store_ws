@@ -15,8 +15,8 @@ from store_interfaces.msg import NodeHealth
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
 from ..core.reorient_motion import (
-    ReorientPlanningError, plan_edge_pivot_flip, plan_gentle_flip, plan_reorient,
-    plan_two_stage_flip,
+    ReorientPlanningError, plan_back_tilt_vertical_flip, plan_edge_pivot_flip,
+    plan_gentle_flip, plan_reorient, plan_two_stage_flip,
 )
 from ..core.safety_guard import SafetyGuard, load_settings
 from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
@@ -69,6 +69,17 @@ class ExecutorNode(Node):
         self._pivot_tilt_deg = float(reorient.get("pivot_tilt_deg", 35.0))
         self._drag_forward_mm = float(reorient.get("drag_forward_mm", 55.0))
         self._release_z_offset_mm = float(reorient.get("release_z_offset_mm", 25.0))
+        self._vertical_flip_params = {
+            "back_tilt_deg": float(reorient.get("back_tilt_deg", 30.0)),
+            "mid_tilt_deg": float(reorient.get("vertical_mid_tilt_deg", 0.0)),
+            "fwd_tilt_deg": float(reorient.get("vertical_fwd_tilt_deg", 45.0)),
+            "edge_offset_mm": float(reorient.get("vertical_edge_offset_mm", 65.0)),
+            "mid_y_offset_mm": float(reorient.get("vertical_mid_y_offset_mm", 0.0)),
+            "sweep_y_mm": float(reorient.get("vertical_sweep_y_mm", 145.0)),
+            "lift_delta_mm": float(reorient.get("vertical_lift_delta_mm", 165.0)),
+            "mid_z_delta_mm": float(reorient.get("vertical_mid_z_delta_mm", 145.0)),
+            "release_z_delta_mm": float(reorient.get("vertical_release_z_delta_mm", 115.0)),
+        }
         speeds = (self._velocity, self._acceleration, self._slow_velocity, self._slow_acceleration)
         if not all(isfinite(value) and value > 0 for value in speeds):
             raise ValueError("속도와 가속도는 유한한 양수여야 합니다.")
@@ -307,15 +318,17 @@ class ExecutorNode(Node):
         delta_rz = (target_rz - current_eff_rz + 180.0) % 360.0 - 180.0
         return current_j6, current_j6 + delta_rz
 
-    def _move_linear(self, pose):
+    def _move_linear(self, pose, vel=None, acc=None):
         current_j6, predicted_j6 = self._predict_j6_after_linear(pose[3])
         if not (self._guard.check_j6_limit(current_j6) and self._guard.check_j6_limit(predicted_j6)):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
-        self._robot.move_linear_4d(pose, self._velocity, self._acceleration)
+        self._robot.move_linear_4d(
+            pose, self._velocity if vel is None else vel, self._acceleration if acc is None else acc,
+        )
 
-    def _raise_for_approach(self, handle, pose, move_6d=None):
+    def _raise_for_approach(self, handle, pose, move_6d=None, *, raise_at_same_xy=False):
         current = self._robot.get_current_pose_6d()
-        if current[2] < pose[2] and current[:2] != pose[:2]:
+        if current[2] < pose[2] and (raise_at_same_xy or current[:2] != pose[:2]):
             # 현재 XY에서 먼저 상승한 뒤 목표 XY로 이동합니다.
             vertical = self._checked_pose([*current[:2], pose[2], current[5]])
             self._check_interruption(handle)
@@ -531,9 +544,109 @@ class ExecutorNode(Node):
         self._step(handle, restore.stage, 10, total, self._robot.move_joint, restored_joints, *speeds)
         self._step(handle, retreat.stage, 11, total, self._move_linear, retreat.pose)
 
+    def _check_joint_path_fkin(self, start_joints, end_joints, fractions=(0.25, 0.5, 0.75, 1.0)):
+        for fraction in fractions:
+            joints = [
+                start + fraction * (end - start) for start, end in zip(start_joints, end_joints)
+            ]
+            predicted = self._robot.predict_forward_pose(joints)
+            if predicted is not None:
+                self._checked_pose([*predicted[:3], predicted[5]])
+            elif not self._dry_run:
+                raise ReorientPlanningError("OUT_OF_REACH", "관절 이동 경로의 정기구학을 확인할 수 없습니다.")
+
+    def _execute_back_tilt_vertical_flip(self, handle, target, grasp, open_args, move_args):
+        robot = self._robot
+        cur_joints = list(robot.get_current_joints())
+        params = dict(self._vertical_flip_params)
+        if grasp.vertical_edge_offset_mm is not None:
+            params["edge_offset_mm"] = grasp.vertical_edge_offset_mm
+        approach, descend, grip, lift, mid, flip, release, reverse, retreat = (
+            plan_back_tilt_vertical_flip(target, cur_joints[5], self._guard, **params)
+        )
+
+        j6_limits = (self._guard.j6_min_deg, self._guard.j6_max_deg)
+
+        def solve(pose, reference, *, max_joint_deltas=None):
+            kwargs = {"j6_limits": j6_limits}
+            if max_joint_deltas is not None:
+                kwargs["max_joint_deltas"] = max_joint_deltas
+            joints = robot.solve_continuous_ik(pose, reference, **kwargs)
+            if joints is None:
+                raise ReorientPlanningError("OUT_OF_REACH", "길이 방향 반전에 필요한 연속 관절 해가 없습니다.")
+            return joints
+
+        rz = approach.pose[3]
+        # ZYZ [90 - rz, -(180 - tilt), 90]은 tilt->0에서 [0, 180, rz]와 연속이며 공구 -Y 방향으로 기울어집니다.
+        tilt_rx = (90.0 - rz + 180.0) % 360.0 - 180.0
+        back_orientation = [tilt_rx, -(180.0 - params["back_tilt_deg"]), 90.0]
+        mid_tilt = params["mid_tilt_deg"]
+        mid_orientation = (
+            [0.0, 180.0, rz] if abs(mid_tilt) < 1e-6 else [tilt_rx, -(180.0 - mid_tilt), 90.0]
+        )
+        fwd_orientation = [tilt_rx, -(180.0 - params["fwd_tilt_deg"]), 90.0]
+        app_6d = [*approach.pose[:3], *back_orientation]
+        grp_6d = [*descend.pose[:3], *back_orientation]
+        mid_6d = [*mid.pose[:3], *mid_orientation]
+        end_6d = [*flip.pose[:3], *fwd_orientation]
+        retreat_6d = [*retreat.pose[:3], 0.0, 180.0, rz]
+
+        init_deltas = (180.0, 120.0, 120.0, 65.0, 120.0, 180.0)
+        roll_deltas = (95.0, 90.0, 95.0, 65.0, 65.0, 110.0)
+        j_app = solve(app_6d, cur_joints, max_joint_deltas=init_deltas)
+        j_grp = solve(grp_6d, j_app)
+        j_mid = solve(mid_6d, j_app, max_joint_deltas=roll_deltas)
+        j_end = solve(end_6d, j_mid, max_joint_deltas=roll_deltas)
+        j_retreat = solve(retreat_6d, j_mid, max_joint_deltas=roll_deltas)
+
+        if not all(
+            self._guard.check_j6_limit(joints[5])
+            for joints in (j_app, j_grp, j_mid, j_end, j_retreat)
+        ):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+
+        self._check_joint_path_fkin(j_app, j_grp)
+        self._check_joint_path_fkin(j_app, j_mid)
+        self._check_joint_path_fkin(j_mid, j_end, fractions=(0.2, 0.4, 0.6, 0.8, 1.0))
+        self._check_joint_path_fkin(j_mid, j_retreat)
+
+        speeds = (
+            min(self._velocity, self._slow_velocity),
+            min(self._acceleration, self._slow_acceleration),
+        )
+
+        def move_joint(joints, sim_pose=None):
+            robot.move_joint(joints, *speeds)
+            if self._dry_run and sim_pose is not None:
+                robot.set_simulated_reference_pose(sim_pose)
+
+        def approach_back():
+            self._raise_for_approach(
+                handle, approach.pose, lambda pose: self._move_linear_6d(handle, pose, *speeds),
+                raise_at_same_xy=True,
+            )
+            self._check_interruption(handle)
+            self._check_joint_path_fkin(list(robot.get_current_joints()), j_app)
+            self._check_interruption(handle)
+            move_joint(j_app, app_6d)
+
+        total = 10
+        self._step(handle, "open_gripper", 1, total, self._gripper.open_mm, *open_args)
+        self._step(handle, approach.stage, 2, total, approach_back)
+        self._step(handle, descend.stage, 3, total, move_joint, j_grp, grp_6d)
+        self._step(handle, grip.stage, 4, total, self._gripper.move_mm, *move_args)
+        self._verify_grasp(handle, grasp, j_app, retreat=lambda joints: move_joint(joints, app_6d))
+        self._step(handle, lift.stage, 5, total, move_joint, j_app, app_6d)
+        self._step(handle, mid.stage, 6, total, move_joint, j_mid, mid_6d)
+        self._step(handle, flip.stage, 7, total, move_joint, j_end, end_6d)
+        self._step(handle, release.stage, 8, total, self._gripper.open_mm, *open_args)
+        self._step(handle, reverse.stage, 9, total, move_joint, j_mid, mid_6d)
+        self._step(handle, retreat.stage, 10, total, move_joint, j_retreat, retreat_6d)
+
     def _execute_grasp_task(self, handle, action, goal, grasp):
         if action == "reorient" and grasp.reorient_mode not in {
             "edge_pivot_flip", "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+            "back_tilt_vertical_flip",
         }:
             raise TaskFailure("INVALID_ACTION", False)
         target = self._checked_pose(goal["target_pose"])
@@ -544,6 +657,9 @@ class ExecutorNode(Node):
         open_args = (grasp.open_width_mm, grasp.grasp_force_n)
         move_args = (grasp.grasp_width_mm, grasp.grasp_force_n)
         if action == "reorient":
+            if grasp.reorient_mode == "back_tilt_vertical_flip":
+                self._execute_back_tilt_vertical_flip(handle, target, grasp, open_args, move_args)
+                return
             if grasp.reorient_mode == "edge_pivot_flip":
                 self._execute_edge_pivot_flip(handle, target, grasp, open_args, move_args)
                 return

@@ -4,7 +4,8 @@ import ast
 import pytest
 
 from store_robot_control.core.reorient_motion import (
-    ReorientPlanningError, plan_edge_pivot_flip, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+    ReorientPlanningError, plan_back_tilt_vertical_flip, plan_edge_pivot_flip,
+    plan_gentle_flip, plan_reorient, plan_two_stage_flip,
 )
 from store_robot_control.core.safety_guard import SafetyGuard
 from conftest import TEST_WORKSPACE
@@ -197,3 +198,55 @@ def test_edge_pivot_flip_rejects_j6_limit(guard):
     with pytest.raises(ReorientPlanningError) as exc:
         plan_edge_pivot_flip([332.5, 0.0, 40.0, 0.0], 90.0, 151.0, guard)
     assert exc.value.error_code == "J6_LIMIT_VIOLATION"
+
+
+def test_back_tilt_vertical_flip_plan(guard):
+    points = plan_back_tilt_vertical_flip([350, 20, 40, 0], 150, guard)
+    assert [point.stage for point in points] == [
+        "approach_back", "descend_back", "grasp", "lift_back", "mid_upright",
+        "flip_over", "release_flip", "lift_after_flip", "retreat",
+    ]
+    assert [point.action for point in points] == [
+        "move_joint_ik", "move_joint_ik", "grasp", "move_joint_ik", "move_joint_ik",
+        "move_joint_ik", "release", "move_joint_ik", "move_linear",
+    ]
+    assert [point.stage for point in points if point.check_grip] == ["grasp"]
+    assert points[0].pose == pytest.approx([350, -45, 205, 0])
+    assert points[1].pose == points[2].pose == pytest.approx([350, -45, 40, 0])
+    assert points[0].pose == points[3].pose
+    assert points[4].pose == pytest.approx([350, 20, 185, 0])
+    assert points[5].pose == pytest.approx([350, 165, 155, 0])
+    assert points[5].pose == points[6].pose
+    assert points[4].pose == points[7].pose
+    assert points[8].pose == [350, 20, 260, 0]
+
+    # 소각도 회전(rz=25°) 시 Doosan 하향 ZYZ 공구 Y축 (+sin, +cos) 기준으로 -Y 끝단과 +Y 넘기기가 회전하는지 확인
+    rotated = plan_back_tilt_vertical_flip([350, 20, 40, 25], 150, guard)
+    assert rotated[0].pose[:2] == pytest.approx([322.529812, -38.910006], abs=1e-3)
+    assert rotated[5].pose[:2] == pytest.approx([411.279650, 151.414630], abs=1e-3)
+
+
+@pytest.mark.parametrize(("target", "j6", "params", "code"), [
+    ([721, 0, 40, 0], 0, {}, "OUT_OF_REACH"),
+    ([350, -390, 40, 0], 0, {}, "OUT_OF_REACH"),
+    ([350, 300, 40, 0], 0, {}, "OUT_OF_REACH"),
+    ([350, 0, 400, 0], 0, {}, "OUT_OF_REACH"),
+    ([350, 0, 350, 0], 0, {}, "OUT_OF_REACH"),
+    ([350, 0, 14, 0], 0, {}, "Z_MIN_VIOLATION"),
+    ([350, 0, 40, 90], 0, {}, "INVALID_POSE"),
+    ([350, 0, 40, -35], 0, {}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 151, {}, "J6_LIMIT_VIOLATION"),
+    ([350, 0, 40, 0], 0, {"back_tilt_deg": 14.0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"fwd_tilt_deg": 19.0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"mid_tilt_deg": 61}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"fwd_tilt_deg": 96}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"edge_offset_mm": 0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"sweep_y_mm": -1}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"lift_delta_mm": float("inf")}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"mid_z_delta_mm": -1}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"release_z_delta_mm": float("nan")}, "INVALID_POSE"),
+])
+def test_back_tilt_vertical_flip_rejects_unsafe_plan(guard, target, j6, params, code):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_back_tilt_vertical_flip(target, j6, guard, **params)
+    assert exc.value.error_code == code

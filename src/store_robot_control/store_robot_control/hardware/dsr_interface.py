@@ -179,6 +179,58 @@ class DoosanRobotInterface:
         except (RuntimeError, ValueError, TypeError) as exc:
             raise MotionUnreachableError("목표 자세의 역기구학 해를 구하지 못했습니다.") from exc
 
+    def solve_continuous_ik(
+        self, pose_6d: list[float], reference_joints: list[float], *,
+        max_joint_deltas=(35.0, 90.0, 95.0, 45.0, 185.0, 45.0),
+        max_j3_abs: float = 155.0, max_j5_abs: float = 130.0,
+        j6_limits: tuple[float, float] | None = None,
+    ) -> list[float] | None:
+        pose = self._six_values(pose_6d, "ikin")
+        reference = self._six_values(reference_joints, "ikin 기준 관절")
+        if self._dry_run:
+            candidate = reference.copy()
+            candidate[2] = max(-max_j3_abs, min(max_j3_abs, reference[2]))
+            j5 = -reference[4] if pose[4] < 130.0 else reference[4]
+            candidate[4] = max(-max_j5_abs, min(max_j5_abs, j5))
+            if j6_limits is not None and not (j6_limits[0] <= candidate[5] <= j6_limits[1]):
+                return None
+            return candidate
+
+        target = self._posx(pose)
+        candidates = []
+        for solution in range(8):
+            try:
+                candidate = self._six_values(
+                    self._api.ikin(target, solution, ref=self._api.DR_BASE), "ikin",
+                )
+            except Exception:
+                continue
+            if not any(candidate) or abs(candidate[2]) > max_j3_abs or abs(candidate[4]) > max_j5_abs:
+                continue
+            if j6_limits is not None and not (j6_limits[0] <= candidate[5] <= j6_limits[1]):
+                continue
+            if abs(reference[2]) > 10.0 and candidate[2] * reference[2] <= 0.0:
+                continue
+            deltas = [abs(current - previous) for current, previous in zip(candidate, reference)]
+            if any(delta > limit for delta, limit in zip(deltas, max_joint_deltas)):
+                continue
+
+            if hasattr(self._api, "fkin"):
+                try:
+                    predicted = self.predict_forward_pose(candidate)
+                except Exception:
+                    continue
+                if (predicted is None
+                        or dist(predicted[:3], pose[:3]) > max(5.0, self._arrival_tolerance_mm)
+                        or zyz_orientation_error_deg(predicted[3:], pose[3:])
+                        > max(5.0, self._arrival_angle_tolerance_deg)):
+                    continue
+            candidates.append(((deltas[3] + deltas[5], sum(deltas)), candidate))
+
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[0])[1]
+
     def predict_forward_pose(self, joints_deg: list[float]) -> list[float] | None:
         joints = self._six_values(joints_deg, "fkin")
         if self._dry_run or not hasattr(self._api, "fkin"):

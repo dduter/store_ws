@@ -19,6 +19,7 @@ def planner():
 def test_catalog_grasp(planner, category, expected):
     plan = planner.plan_grasp(category)
     assert plan.category == category
+    assert plan.vertical_edge_offset_mm is None
     assert plan.reorient_mode == "edge_pivot_flip"
     assert (
         plan.grasp_width_mm,
@@ -38,6 +39,7 @@ def test_default_grasp(planner, category):
     assert planner.plan_grasp(category) == planner.plan_grasp("defaults")
     assert planner.plan_grasp(category).grasp_width_mm == 20
     assert planner.plan_grasp(category).open_width_mm == 90
+    assert planner.plan_grasp(category).vertical_edge_offset_mm is None
     assert planner.plan_grasp(category).reorient_mode == "edge_pivot_flip"
 
 
@@ -61,11 +63,12 @@ def test_per_product_override_falls_back_to_category():
             "paper_box": {"grasp_width_mm": 20.0, "open_width_mm": 95.0, "grasp_force_n": 20.0, "grasp_depth_offset_mm": 18.0},
         },
         "products": {
-            "choco_pie": {"category": "paper_box", "grasp_force_n": 14.0},
+            "choco_pie": {"category": "paper_box", "grasp_force_n": 14.0, "vertical_edge_offset_mm": "42.5"},
         },
     })
     plan = planner.plan_grasp("choco_pie")
     assert plan.category == "choco_pie"
+    assert plan.vertical_edge_offset_mm == 42.5
     assert (plan.grasp_width_mm, plan.open_width_mm, plan.grasp_force_n, plan.grasp_depth_offset_mm) == (20.0, 95.0, 14.0, 18.0)
 
 
@@ -81,3 +84,24 @@ def test_rg2_clamping(planner, override, expected):
 @pytest.mark.parametrize("category", ["cigarette_mock"])
 def test_special_categories_disable_reorient(planner, category):
     assert planner.plan_grasp(category).reorient_mode == "none"
+
+
+def test_measured_product_overrides(planner):
+    pepero = planner.plan_grasp("pepero_almond")
+    assert pepero.category == "pepero_almond"
+    assert (pepero.open_width_mm, pepero.grasp_width_mm, pepero.grasp_force_n) == (108.0, 84.0, 3.0)
+    assert pepero.reorient_mode == "back_tilt_vertical_flip"
+    assert pepero.vertical_edge_offset_mm == 65.0
+
+    postick = planner.plan_grasp("postick")
+    assert postick.category == "postick"
+    assert (postick.open_width_mm, postick.grasp_width_mm, postick.grasp_force_n) == (110.0, 20.0, 12.0)
+    assert postick.reorient_mode == "edge_pivot_flip"
+    assert postick.vertical_edge_offset_mm is None
+
+
+@pytest.mark.parametrize("offset", [0, -1, float("nan"), float("inf"), "invalid"])
+def test_invalid_vertical_edge_offset(planner, monkeypatch, offset):
+    monkeypatch.setitem(planner.products["pepero_almond"], "vertical_edge_offset_mm", offset)
+    with pytest.raises(ValueError, match="vertical_edge_offset_mm"):
+        planner.plan_grasp("pepero_almond")

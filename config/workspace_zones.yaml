@@ -4,7 +4,8 @@ robot:
   tool_name: Tool_Weight
   tcp_name: GripperDA_v1
 safety:
-  z_min_mm: -13.784599304199219
+  # 바닥 실측(~-23.8mm) 대비 안전 여유 약 5.8mm (2차 실물 파지 테스트 반영: -16.5 -> -18.0)
+  z_min_mm: -18.0
   safe_transit_z_mm: 260.0
   approach_offset_z_mm: 80.0
   j6_min_deg: -150.0

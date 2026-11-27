@@ -685,3 +685,243 @@ def test_edge_pivot_checks_fkin_before_restore_j5(node, monkeypatch):
     assert result.error_code == "OUT_OF_REACH"
     assert result.stopped_for_safety
     assert handle.feedback[-1] == "lift_after_flip"
+
+
+def test_continuous_ik_preserves_elbow_and_prefers_wrist_continuity(node, monkeypatch):
+    robot = node._robot
+    reference = [0, 0, 80, 0, 80, 0]
+    pose = [560, 0, 100, 0, 105, 0]
+    solutions = [
+        [0, 0, -11, 0, 80, 0],
+        [0, 0, 80, 180, 80, 180],
+        [0, 0, 81, 0, 80, 0],
+        [0, 10, 120, 1, -50, 1],
+        [0, 0, 80, 5, 80, 5],
+        [0, 0, 82, 0, 80, 0],
+        [0] * 6,
+    ]
+    queried = []
+
+    def ikin(target, solution, *, ref):
+        assert target == pose and ref == 0
+        queried.append(solution)
+        return solutions[solution]
+
+    def fkin(joints, *, ref):
+        if joints == solutions[2]:
+            return [590, *pose[1:]]
+        if joints == solutions[5]:
+            return [*pose[:3], 0, 140, 0]
+        return pose
+
+    monkeypatch.setattr(robot, "_dry_run", False)
+    monkeypatch.setattr(robot, "_api", SimpleNamespace(ikin=ikin, fkin=fkin, DR_BASE=0), raising=False)
+    monkeypatch.setattr(robot, "_posx", list, raising=False)
+    monkeypatch.setattr(robot, "_posj", list, raising=False)
+    assert robot.solve_continuous_ik(pose, reference) == solutions[3]
+    assert queried == list(range(8))
+
+    # J6 경계 근처에서 j6_limits 필터가 범위 초과 후보를 정렬 전에 제외하는지 확인
+    near_limit_ref = [0, 0, 80, 0, 80, 145]
+    solutions[3] = [0, 10, 120, 0, -50, 151]  # 더 가깝지만 J6 한계 초과
+    solutions[4] = [0, 10, 120, 2, -50, 148]  # J6 허용 범위 안
+    assert robot.solve_continuous_ik(pose, near_limit_ref, j6_limits=(-150.0, 150.0)) == solutions[4]
+
+
+@pytest.mark.parametrize(("grip_detected", "edge_offset_mm", "expected_y"), [
+    (True, 65.0, -65),
+    (False, 65.0, -65),
+    (True, 50.0, -50),
+    (True, None, -65),
+])
+def test_back_tilt_vertical_flip_execution(node, monkeypatch, grip_detected, edge_offset_mm, expected_y):
+    monkeypatch.setitem(node._grasp.products["pepero_almond"], "vertical_edge_offset_mm", edge_offset_mm)
+    original_params = dict(node._vertical_flip_params)
+    robot = node._robot
+    node._velocity = 20.0
+    robot._pose[2] = 100.0
+    app = [20, -9, 110, -28, 90, 22]
+    grip = [20, 3, 128, -32, 63, 38]
+    mid = [-3, -12, 97, 0, 96, -3]
+    end = [-54, 44, 107, 38, 108, -73]
+    retreat_j = [-3, -10, 90, 0, 95, -3]
+    solutions = iter([app, grip, mid, end, retreat_j])
+    ik_calls, commands = [], []
+
+    def solve(pose, reference, **kwargs):
+        ik_calls.append((pose, reference, kwargs))
+        return next(solutions)
+
+    monkeypatch.setattr(robot, "solve_continuous_ik", solve)
+    monkeypatch.setattr(robot, "move_joint", lambda *args: commands.append(("joint", *args)))
+    monkeypatch.setattr(robot, "move_linear_6d", lambda *args: commands.append(("raise", *args)))
+    monkeypatch.setattr(node._gripper, "open_mm", lambda *args: commands.append(("open", *args)))
+    monkeypatch.setattr(node._gripper, "move_mm", lambda *args: commands.append(("grasp", *args)))
+    monkeypatch.setattr(node._gripper, "is_grip_detected", lambda: grip_detected)
+
+    handle = GoalHandle("reorient", target=[300.0, 0.0, 40.0, 0.0], category="pepero_almond")
+    result = run_goal(node, handle)
+    assert [(pose, ref_j) for pose, ref_j, _ in ik_calls] == [
+        ([300, expected_y, 190, 90, -150, 90], [0, 0, 90, 0, 90, 0]),
+        ([300, expected_y, 25, 90, -150, 90], app),
+        ([300, 0, 170, 0, 180, 0], app),
+        ([300, 145, 140, 90, -135, 90], mid),
+        ([300, 0, 260, 0, 180, 0], mid),
+    ]
+    assert node._vertical_flip_params == original_params
+    assert ik_calls[0][2]["max_joint_deltas"][0] == 180.0
+    assert all(kw["j6_limits"] == (-150.0, 150.0) for _, _, kw in ik_calls)
+    assert commands[:6] == [
+        ("open", 108.0, 3.0),
+        ("raise", [380, 0, 190, 0, 180, 0], 20.0, 30.0),
+        ("joint", app, 20.0, 30.0),
+        ("joint", grip, 20.0, 30.0),
+        ("grasp", 84.0, 3.0),
+        ("joint", app, 20.0, 30.0),
+    ]
+    assert handle.feedback[:4] == ["open_gripper", "approach_back", "descend_back", "grasp"]
+    if grip_detected:
+        assert result.success
+        assert list(result.final_pose) == [300.0, 0.0, 260.0, 0.0]
+        assert handle.feedback[4:] == [
+            "lift_back", "mid_upright", "flip_over", "release_flip", "lift_after_flip", "retreat",
+        ]
+        assert commands[6:] == [
+            ("joint", mid, 20.0, 30.0),
+            ("joint", end, 20.0, 30.0),
+            ("open", 108.0, 3.0),
+            ("joint", mid, 20.0, 30.0),
+            ("joint", retreat_j, 20.0, 30.0),
+        ]
+    else:
+        assert not result.success and result.stopped_for_safety
+        assert result.error_code == "GRASP_FAIL"
+        assert handle.feedback[4:] == ["grasp_fail_retreat", "grasp_fail_release"]
+        assert commands[6:] == [("open", 108.0, 3.0)]
+
+
+@pytest.mark.parametrize(("failure", "code"), [
+    ("ik", "OUT_OF_REACH"),
+    ("path_missing", "OUT_OF_REACH"),
+    ("z_min", "Z_MIN_VIOLATION"),
+    ("workspace", "OUT_OF_REACH"),
+])
+def test_back_tilt_vertical_flip_preflight_rejects_before_motion(node, monkeypatch, failure, code):
+    robot = node._robot
+    monkeypatch.setattr(node, "_dry_run", False)
+    fk_calls = []
+    ik_calls = []
+
+    def solve(pose, reference, **kwargs):
+        ik_calls.append(pose)
+        return None if failure == "ik" and len(ik_calls) == 4 else reference
+
+    def predict(joints):
+        fk_calls.append(joints)
+        if len(fk_calls) == 1:
+            return {
+                "path_missing": None,
+                "z_min": [350, 0, 14, 0, 140, 0],
+                "workspace": [721, 0, 180, 0, 140, 0],
+            }[failure]
+        return [350, 0, 180, 0, 140, 0]
+
+    monkeypatch.setattr(robot, "solve_continuous_ik", solve)
+    monkeypatch.setattr(robot, "predict_forward_pose", predict)
+    for device, methods in [
+        (robot, ["move_joint", "move_linear_4d", "move_linear_6d"]),
+        (node._gripper, ["open_mm", "move_mm"]),
+    ]:
+        for method in methods:
+            monkeypatch.setattr(device, method, lambda *args: pytest.fail("사전 검증 중 장치가 움직였습니다."))
+
+    handle = GoalHandle("reorient", category="pepero_almond")
+    result = run_goal(node, handle)
+    assert not result.success and result.stopped_for_safety
+    assert result.error_code == code
+    assert handle.feedback == []
+
+
+def test_back_tilt_vertical_flip_checks_approach_arc_before_first_movej(node, monkeypatch):
+    robot = node._robot
+    monkeypatch.setattr(node, "_dry_run", False)
+    fk_count = 0
+
+    def solve(pose, reference, **kwargs):
+        return [0.0, 10.0, 90.0, -30.0, 90.0, 0.0]
+
+    def predict(joints):
+        nonlocal fk_count
+        fk_count += 1
+        # 사전 경로 검사(4+4+5+4=17회) 통과 후, approach_back FK에서 범위 이탈
+        if fk_count > 17:
+            return [725.0, 0.0, 180.0, 0.0, 140.0, 0.0]
+        return [350.0, 0.0, 180.0, 0.0, 140.0, 0.0]
+
+    monkeypatch.setattr(robot, "solve_continuous_ik", solve)
+    monkeypatch.setattr(robot, "predict_forward_pose", predict)
+    monkeypatch.setattr(robot, "move_joint", lambda *args: pytest.fail("접근 경로 FK 실패 후 move_joint 호출"))
+    monkeypatch.setattr(node._gripper, "open_mm", lambda *args: None)
+
+    handle = GoalHandle("reorient", target=[300.0, 0.0, 40.0, 0.0], category="pepero_almond")
+    result = run_goal(node, handle)
+    assert not result.success and result.stopped_for_safety
+    assert result.error_code == "OUT_OF_REACH"
+    assert handle.feedback == ["open_gripper", "approach_back"]
+
+
+def test_mock_robot_supports_pepero_back_tilt_vertical_flip(tmp_path, monkeypatch):
+    from store_robot_control.nodes.mock_robot import MockRobot
+
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path))
+    cfg_dir = make_test_config_dir(tmp_path)
+    rclpy.init(args=[
+        "--ros-args",
+        "-p", f"config_dir:={cfg_dir}",
+        "-p", "step_delay_sec:=0.0",
+        "-p", f"log_dir:={tmp_path}",
+    ])
+    mock = None
+    try:
+        mock = MockRobot()
+        handle = GoalHandle("reorient", target=[300.0, 0.0, 40.0, 0.0], category="pepero_almond")
+        result = run_goal(mock, handle)
+        assert result.success
+        assert result.error_code == "OK"
+        assert handle.feedback[0] == "approach_back"
+        assert handle.feedback[-1] == "retreat"
+
+        # apply_grasp_depth_offset=True 일관성: target Z=290 -> 보정 Z=275로 실행기와 동일하게 통과
+        high_handle = GoalHandle("reorient", target=[300.0, 0.0, 290.0, 0.0], category="pepero_almond")
+        high_result = run_goal(mock, high_handle)
+        assert high_result.success
+        assert high_result.error_code == "OK"
+    finally:
+        if mock is not None:
+            mock.destroy_node()
+        rclpy.try_shutdown()
+
+
+def test_back_tilt_vertical_flip_rotates_tilt_axis_with_rz(node, monkeypatch):
+    robot = node._robot
+    ik_poses = []
+
+    def solve(pose, reference, **kwargs):
+        ik_poses.append(pose)
+        return reference
+
+    monkeypatch.setattr(robot, "solve_continuous_ik", solve)
+    monkeypatch.setattr(robot, "move_joint", lambda *args: None)
+    monkeypatch.setattr(robot, "move_linear_6d", lambda *args: None)
+    monkeypatch.setattr(node._gripper, "open_mm", lambda *args: None)
+    monkeypatch.setattr(node._gripper, "move_mm", lambda *args: None)
+    monkeypatch.setattr(node._gripper, "is_grip_detected", lambda: True)
+
+    handle = GoalHandle("reorient", target=[350.0, 20.0, 40.0, 25.0], category="pepero_almond")
+    result = run_goal(node, handle)
+    assert result.success
+    assert ik_poses[0][3:] == pytest.approx([65.0, -150.0, 90.0])
+    assert ik_poses[1][3:] == pytest.approx([65.0, -150.0, 90.0])
+    assert ik_poses[2][3:] == pytest.approx([0.0, 180.0, 25.0])
+    assert ik_poses[3][3:] == pytest.approx([65.0, -135.0, 90.0])
+    assert ik_poses[4][3:] == pytest.approx([0.0, 180.0, 25.0])

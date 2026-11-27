@@ -278,3 +278,70 @@ def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: flo
         waypoint("restore_j5", lift_x, lift_y, lift_z, "move_joint_j5", -delta_j5),
         waypoint("retreat", x, y, transit_z),
     ]
+
+
+def plan_back_tilt_vertical_flip(
+    target_pose, current_j6_deg: float, safety_guard: SafetyGuard, *,
+    edge_offset_mm: float = 65.0, mid_y_offset_mm: float = 0.0, sweep_y_mm: float = 145.0,
+    back_tilt_deg: float = 30.0, mid_tilt_deg: float = 0.0, fwd_tilt_deg: float = 45.0,
+    lift_delta_mm: float = 165.0, mid_z_delta_mm: float = 145.0,
+    release_z_delta_mm: float = 115.0,
+):
+    guard = safety_guard
+    check = guard.validate_pose(target_pose)
+    if not check.ok:
+        raise ReorientPlanningError(check.error_code, check.message)
+
+    distances = (edge_offset_mm, lift_delta_mm, mid_z_delta_mm, release_z_delta_mm)
+    angles = (back_tilt_deg, mid_tilt_deg, fwd_tilt_deg)
+    if (not all(map(isfinite, (*distances, mid_y_offset_mm, sweep_y_mm, *angles)))
+            or min(distances) <= 0
+            or sweep_y_mm < 0
+            or not 15.0 <= back_tilt_deg <= 55.0
+            or not 0.0 <= mid_tilt_deg <= 60.0
+            or not 20.0 <= fwd_tilt_deg <= 95.0):
+        raise ReorientPlanningError("INVALID_POSE", "상하 반전의 기울기 또는 거리 설정이 유효하지 않습니다.")
+    if not guard.check_j6_limit(current_j6_deg):
+        raise ReorientPlanningError("J6_LIMIT_VIOLATION", "현재 J6 각도가 허용 범위를 벗어났습니다.")
+
+    x, y, target_z, rz = check.clamped_pose
+    if abs(rz) > 30.0:
+        raise ReorientPlanningError("INVALID_POSE", "상하 반전은 상품 정렬 각도 |rz| <= 30도 범위에서만 지원합니다.")
+    # Doosan 하향 ZYZ [0, 180, rz]의 공구 Y축 (+sin(rz), +cos(rz))을 따라 -Y 끝단 파지 -> +Y 지렛대 넘기기를 계획합니다.
+    rz_rad = radians(rz)
+    gx = x - edge_offset_mm * sin(rz_rad)
+    gy = y - edge_offset_mm * cos(rz_rad)
+    mx = x + mid_y_offset_mm * sin(rz_rad)
+    my = y + mid_y_offset_mm * cos(rz_rad)
+    ex = mx + sweep_y_mm * sin(rz_rad)
+    ey = my + sweep_y_mm * cos(rz_rad)
+    z_grasp = max(guard.z_min_mm, target_z)
+    transit_z = guard.safe_transit_z(z_grasp)
+    z_max = guard.bounds["z_max"]
+    lift_z = min(z_max, max(160.0, z_grasp + lift_delta_mm))
+    mid_z = min(z_max, max(130.0, z_grasp + mid_z_delta_mm))
+    end_z = min(mid_z, max(75.0, z_grasp + release_z_delta_mm))
+    if lift_z <= z_grasp or mid_z <= end_z:
+        raise ReorientPlanningError("OUT_OF_REACH", "반전에 필요한 상승 또는 하강 여유가 부족합니다.")
+
+    def waypoint(stage, pose, action="move_joint_ik"):
+        check = guard.validate_pose(pose)
+        if not check.ok:
+            raise ReorientPlanningError(check.error_code, check.message)
+        return MotionWaypoint(stage, pose, current_j6_deg, action=action, check_grip=action == "grasp")
+
+    lifted = [gx, gy, lift_z, rz]
+    grasp = [gx, gy, z_grasp, rz]
+    mid = [mx, my, mid_z, rz]
+    end = [ex, ey, end_z, rz]
+    return [
+        waypoint("approach_back", lifted.copy()),
+        waypoint("descend_back", grasp.copy()),
+        waypoint("grasp", grasp, "grasp"),
+        waypoint("lift_back", lifted),
+        waypoint("mid_upright", mid.copy()),
+        waypoint("flip_over", end.copy()),
+        waypoint("release_flip", end, "release"),
+        waypoint("lift_after_flip", mid),
+        waypoint("retreat", [x, y, transit_z, rz], "move_linear"),
+    ]

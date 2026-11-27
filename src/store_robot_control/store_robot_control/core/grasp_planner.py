@@ -15,6 +15,7 @@ class GraspPlan:
     rg2_width_reg: int
     rg2_open_width_reg: int
     rg2_force_reg: int
+    vertical_edge_offset_mm: float | None = None
 
 
 class GraspPlanner:
@@ -49,8 +50,17 @@ class GraspPlanner:
         target_open = margin_open if width_override_mm else max(configured_open, margin_open)
         open_width = max(width, min(limits["max_width_mm"], target_open))
         force = max(limits["min_force_n"], min(limits["max_force_n"], force))
+        edge_offset = settings.get("vertical_edge_offset_mm")
+        if edge_offset is not None:
+            error = "vertical_edge_offset_mm은 유한한 양수여야 합니다."
+            try:
+                edge_offset = float(edge_offset)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(error) from exc
+            if not isfinite(edge_offset) or edge_offset <= 0:
+                raise ValueError(error)
         return GraspPlan(
             category, width, open_width, force, settings["grasp_depth_offset_mm"],
             settings["reorient_mode"], int(round(width * 10)), int(round(open_width * 10)),
-            int(round(force * 10)),
+            int(round(force * 10)), vertical_edge_offset_mm=edge_offset,
         )
