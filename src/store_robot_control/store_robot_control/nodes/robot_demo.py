@@ -59,11 +59,12 @@ def build_scenarios(workspace_cfg, suite="all", *, target_pose=None, dest_pose=N
         buffer = checked(zones["buffer_slots"][0], "첫 번째 버퍼")
         scenarios.extend([
             Scenario("home", "home"),
-            Scenario("scan_pose", "scan_pose"),
             Scenario("pick_place", "pick_place", a, b),
             Scenario("move_to_buffer", "move_to_buffer", a, buffer),
             Scenario("restore_from_buffer", "restore_from_buffer", buffer, a),
             Scenario("reorient", "reorient", a),
+            # 스캔 자세의 J5는 작업 공간 설정에서 피벗 시작 각도 상한을 넘을 수 있습니다.
+            Scenario("scan_pose", "scan_pose"),
         ])
     if suite in {"all", "estop"}:
         scenarios.append(Scenario("estop", "pick_place", a, b, "CANCELED", True, emergency_stop=True))

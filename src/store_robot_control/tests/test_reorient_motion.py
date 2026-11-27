@@ -3,7 +3,9 @@ import ast
 
 import pytest
 
-from store_robot_control.core.reorient_motion import ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip
+from store_robot_control.core.reorient_motion import (
+    ReorientPlanningError, plan_edge_pivot_flip, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+)
 from store_robot_control.core.safety_guard import SafetyGuard
 from conftest import TEST_WORKSPACE
 
@@ -147,3 +149,51 @@ def test_gentle_flip_rejects_invalid_plan(guard, x, z, j5, j6, kwargs, code):
     with pytest.raises(ReorientPlanningError) as exc:
         plan_gentle_flip([x, 20, z, 0], j5, j6, guard, **kwargs)
     assert exc.value.error_code == code
+
+
+@pytest.mark.parametrize(("j5", "delta"), [(90.0, -60.0), (-90.0, 60.0)])
+def test_edge_pivot_flip(guard, j5, delta):
+    points = plan_edge_pivot_flip([332.5, 0.0, 40.0, 25.0], j5, 30.0, guard)
+    assert [point.stage for point in points] == [
+        "approach", "descend", "grasp", "pivot_lift", "pivot_tilt_j5",
+        "drag_over", "release_flip", "lift_after_flip", "restore_j5", "retreat",
+    ]
+    assert points[0].pose == [297.5, 0.0, 260.0, 25.0]
+    assert points[1].pose == points[2].pose == [297.5, 0.0, 40.0, 25.0]
+    assert points[2].action == "grasp" and points[2].check_grip
+    assert points[3].pose == points[8].pose == [315.0, 0.0, 110.0, 25.0]
+    assert points[4].pose == pytest.approx([522.846097, 0.0, 230.0, 25.0])
+    assert points[4].action == points[8].action == "move_joint_j5"
+    assert (points[4].j5_delta_deg, points[8].j5_delta_deg) == (delta, -delta)
+    assert points[5].pose == points[6].pose == pytest.approx([577.846097, 0.0, 65.0, 25.0])
+    assert points[6].action == "release"
+    assert points[7].pose == pytest.approx([577.846097, 0.0, 230.0, 25.0])
+    assert points[9].pose == [332.5, 0.0, 260.0, 25.0]
+    assert all(point.j6_deg == 30.0 for point in points)
+
+
+@pytest.mark.parametrize("j5", [79.0, -79.0, 30.0, -30.0, 126.0])
+def test_edge_pivot_flip_rejects_unsafe_j5(guard, j5):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_edge_pivot_flip([332.5, 0.0, 40.0, 0.0], j5, 0.0, guard)
+    assert exc.value.error_code == "OUT_OF_REACH"
+
+
+@pytest.mark.parametrize("x", [500.0, 550.0])
+def test_edge_pivot_flip_rejects_workspace_boundary(guard, x):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_edge_pivot_flip([x, 0.0, 40.0, 0.0], 90.0, 0.0, guard)
+    assert exc.value.error_code == "OUT_OF_REACH"
+
+
+@pytest.mark.parametrize("kwargs", [{"drag_forward_mm": float("inf")}, {"min_j5_abs_deg": 14.0}])
+def test_edge_pivot_flip_rejects_invalid_settings(guard, kwargs):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_edge_pivot_flip([332.5, 0.0, 40.0, 0.0], 90.0, 0.0, guard, **kwargs)
+    assert exc.value.error_code == "INVALID_POSE"
+
+
+def test_edge_pivot_flip_rejects_j6_limit(guard):
+    with pytest.raises(ReorientPlanningError) as exc:
+        plan_edge_pivot_flip([332.5, 0.0, 40.0, 0.0], 90.0, 151.0, guard)
+    assert exc.value.error_code == "J6_LIMIT_VIOLATION"

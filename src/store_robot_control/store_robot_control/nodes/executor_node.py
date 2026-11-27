@@ -1,4 +1,4 @@
-from math import isfinite
+from math import hypot, isfinite
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
@@ -15,7 +15,8 @@ from store_interfaces.msg import NodeHealth
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
 from ..core.reorient_motion import (
-    ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+    ReorientPlanningError, plan_edge_pivot_flip, plan_gentle_flip, plan_reorient,
+    plan_two_stage_flip,
 )
 from ..core.safety_guard import SafetyGuard, load_settings
 from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
@@ -63,6 +64,11 @@ class ExecutorNode(Node):
         self._gentle_tilt_deg = float(reorient.get("gentle_tilt_deg", 40.0))
         self._flip_lift_delta_mm = float(reorient.get("flip_lift_delta_mm", 90.0))
         self._release_clearance_mm = float(reorient.get("release_clearance_mm", 55.0))
+        self._edge_offset_mm = float(reorient.get("edge_offset_mm", 35.0))
+        self._pivot_lift_mm = float(reorient.get("pivot_lift_mm", 70.0))
+        self._pivot_tilt_deg = float(reorient.get("pivot_tilt_deg", 60.0))
+        self._drag_forward_mm = float(reorient.get("drag_forward_mm", 55.0))
+        self._release_z_offset_mm = float(reorient.get("release_z_offset_mm", 25.0))
         speeds = (self._velocity, self._acceleration, self._slow_velocity, self._slow_acceleration)
         if not all(isfinite(value) and value > 0 for value in speeds):
             raise ValueError("속도와 가속도는 유한한 양수여야 합니다.")
@@ -434,9 +440,97 @@ class ExecutorNode(Node):
         self._step(handle, restore.stage, 10, total, self._robot.move_joint, joints, *speeds)
         self._step(handle, retreat.stage, 11, total, self._move_linear, retreat.pose)
 
+    def _check_j5_arc_fkin(self, base_joints, delta_j5):
+        j5 = base_joints[4]
+        for fraction in (0.5, 1.0):
+            sample = base_joints.copy()
+            sample[4] = j5 + delta_j5 * fraction
+            predicted_pose = self._robot.predict_forward_pose(sample)
+            if predicted_pose is not None:
+                self._checked_pose([*predicted_pose[:3], predicted_pose[5]])
+            elif not self._dry_run:
+                raise ReorientPlanningError("OUT_OF_REACH", "J5 회전 궤적의 정기구학을 확인할 수 없습니다.")
+
+    def _execute_edge_pivot_flip(self, handle, target, grasp, open_args, move_args):
+        joints = self._robot.get_current_joints()
+        tilt = self._pivot_tilt_deg
+        try:
+            waypoints = plan_edge_pivot_flip(
+                target, joints[4], joints[5], self._guard,
+                edge_offset_mm=self._edge_offset_mm, pivot_lift_mm=self._pivot_lift_mm,
+                pivot_tilt_deg=tilt, drag_forward_mm=self._drag_forward_mm,
+                release_z_offset_mm=self._release_z_offset_mm,
+            )
+        except ReorientPlanningError as exc:
+            if exc.error_code != "OUT_OF_REACH":
+                raise
+            self.get_logger().warn(
+                f"가장자리 피벗 공간 부족({exc})으로 소각도 gentle_flip으로 대체합니다."
+            )
+            self._execute_gentle_flip(handle, target, grasp, open_args, move_args)
+            return
+        approach, descend, grip, lift, tilt_point, drag, release, lift_after, restore, retreat = waypoints
+        total = len(waypoints) + 1
+        self._step(handle, "open_gripper", 1, total, self._gripper.open_mm, *open_args)
+        self._step(handle, approach.stage, 2, total, self._approach, handle, approach.pose)
+        self._step(handle, descend.stage, 3, total, self._move_linear, descend.pose)
+        self._step(handle, grip.stage, 4, total, self._gripper.move_mm, *move_args)
+        self._verify_grasp(handle, grasp, approach.pose)
+        self._step(handle, lift.stage, 5, total, self._move_linear, lift.pose)
+
+        # 직선 상승 후 실제 관절 자세로 J5의 회전 방향과 TCP 궤적을 다시 확인합니다.
+        joints = list(self._robot.get_current_joints())
+        j5 = joints[4]
+        delta_j5 = -tilt if j5 >= 0.0 else tilt
+        tilted_j5 = j5 + delta_j5
+        if not (abs(j5) <= 125.0 and 20.0 <= abs(tilted_j5) <= 125.0 and j5 * tilted_j5 > 0):
+            raise ReorientPlanningError("OUT_OF_REACH", "J5 특이점 또는 안전 각도 범위를 벗어납니다.")
+        if not self._guard.check_j6_limit(joints[5]):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        self._check_j5_arc_fkin(joints, delta_j5)
+
+        speeds = (
+            min(self._velocity, self._slow_velocity),
+            min(self._acceleration, self._slow_acceleration),
+        )
+        tilted_joints = joints.copy()
+        tilted_joints[4] = tilted_j5
+        self._step(handle, tilt_point.stage, 6, total, self._robot.move_joint, tilted_joints, *speeds)
+
+        tilted_pose = self._robot.get_current_pose_6d()
+        x, y = target[:2]
+        radial = hypot(x, y)
+        ux, uy = (x / radial, y / radial) if radial > 1e-6 else (1.0, 0.0)
+        drag_6d = [
+            tilted_pose[0] + ux * self._drag_forward_mm,
+            tilted_pose[1] + uy * self._drag_forward_mm,
+            min(tilted_pose[2], drag.pose[2]),
+            *tilted_pose[3:],
+        ]
+        lift_6d = [*drag_6d[:2], tilted_pose[2], *tilted_pose[3:]]
+        self._checked_pose([*drag_6d[:3], drag_6d[5]])
+        self._checked_pose([*lift_6d[:3], lift_6d[5]])
+        self._step(handle, drag.stage, 7, total, self._move_linear_6d, handle, drag_6d, *speeds)
+        self._step(handle, release.stage, 8, total, self._gripper.open_mm, *open_args)
+        self._step(handle, lift_after.stage, 9, total, self._move_linear_6d, handle, lift_6d, *speeds)
+
+        # 드래그 후 관절에서 J5만 복원하며, 복원 궤적도 정기구학으로 검증합니다.
+        post_joints = list(self._robot.get_current_joints())
+        post_j5 = post_joints[4]
+        restored_joints = post_joints.copy()
+        restored_joints[4] -= delta_j5
+        if not (20.0 <= abs(post_j5) <= 125.0 and 20.0 <= abs(restored_joints[4]) <= 125.0
+                and post_j5 * restored_joints[4] > 0):
+            raise ReorientPlanningError("OUT_OF_REACH", "J5 복원 각도가 안전 범위를 벗어납니다.")
+        if not self._guard.check_j6_limit(restored_joints[5]):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        self._check_j5_arc_fkin(post_joints, -delta_j5)
+        self._step(handle, restore.stage, 10, total, self._robot.move_joint, restored_joints, *speeds)
+        self._step(handle, retreat.stage, 11, total, self._move_linear, retreat.pose)
+
     def _execute_grasp_task(self, handle, action, goal, grasp):
         if action == "reorient" and grasp.reorient_mode not in {
-            "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+            "edge_pivot_flip", "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
         }:
             raise TaskFailure("INVALID_ACTION", False)
         target = self._checked_pose(goal["target_pose"])
@@ -447,6 +541,9 @@ class ExecutorNode(Node):
         open_args = (grasp.open_width_mm, grasp.grasp_force_n)
         move_args = (grasp.grasp_width_mm, grasp.grasp_force_n)
         if action == "reorient":
+            if grasp.reorient_mode == "edge_pivot_flip":
+                self._execute_edge_pivot_flip(handle, target, grasp, open_args, move_args)
+                return
             if grasp.reorient_mode == "gentle_flip":
                 self._execute_gentle_flip(handle, target, grasp, open_args, move_args)
                 return

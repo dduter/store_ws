@@ -200,3 +200,81 @@ def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
         if not guard.check_j6_limit(waypoint.j6_deg):
             raise ReorientPlanningError("J6_LIMIT_VIOLATION", "예상 J6 각도가 허용 범위를 벗어났습니다.")
     return waypoints
+
+
+def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
+                         safety_guard: SafetyGuard, edge_offset_mm: float = 35.0,
+                         pivot_lift_mm: float = 70.0, pivot_tilt_deg: float = 60.0,
+                         drag_forward_mm: float = 55.0, release_z_offset_mm: float = 25.0,
+                         min_j5_abs_deg: float = 20.0, max_j5_abs_deg: float = 125.0,
+                         tool_length_mm: float = 240.0):
+    guard = safety_guard
+    check = guard.validate_pose(target_pose)
+    if not check.ok:
+        raise ReorientPlanningError(check.error_code, check.message)
+    values = (
+        current_j5_deg, current_j6_deg, edge_offset_mm, pivot_lift_mm, pivot_tilt_deg,
+        drag_forward_mm, release_z_offset_mm, min_j5_abs_deg, max_j5_abs_deg, tool_length_mm,
+    )
+    if (not all(map(isfinite, values)) or edge_offset_mm <= 0 or pivot_lift_mm <= 0
+            or not 20.0 <= pivot_tilt_deg <= 75.0 or drag_forward_mm <= 0
+            or release_z_offset_mm < 0 or min_j5_abs_deg < 15.0 or tool_length_mm < 0):
+        raise ReorientPlanningError("INVALID_POSE", "가장자리 반전 설정이 유효하지 않습니다.")
+    if not guard.check_j6_limit(current_j6_deg):
+        raise ReorientPlanningError("J6_LIMIT_VIOLATION", "J6 각도가 허용 범위를 벗어났습니다.")
+
+    x, y, target_z, rz = check.clamped_pose
+    radial = hypot(x, y)
+    ux, uy = (x / radial, y / radial) if radial > 1e-6 else (1.0, 0.0)
+    pick_x, pick_y = x - ux * edge_offset_mm, y - uy * edge_offset_mm
+    lift_x, lift_y = x - ux * edge_offset_mm / 2, y - uy * edge_offset_mm / 2
+    z_grasp = max(guard.z_min_mm, target_z)
+    transit_z = guard.safe_transit_z(z_grasp)
+    lift_z = z_grasp + pivot_lift_mm
+    if not z_grasp < lift_z <= guard.bounds["z_max"]:
+        raise ReorientPlanningError("OUT_OF_REACH", "피벗 상승 높이가 작업 범위를 벗어납니다.")
+
+    delta_j5 = -pivot_tilt_deg if current_j5_deg >= 0.0 else pivot_tilt_deg
+    tilted_j5 = current_j5_deg + delta_j5
+    if (abs(current_j5_deg) > max_j5_abs_deg
+            or not min_j5_abs_deg <= abs(tilted_j5) <= max_j5_abs_deg
+            or current_j5_deg * tilted_j5 <= 0):
+        raise ReorientPlanningError("OUT_OF_REACH", "J5 특이점 또는 안전 각도 범위를 벗어납니다.")
+
+    for fraction in (0.5, 1.0):
+        angle = radians(pivot_tilt_deg * fraction)
+        swept_x = lift_x + ux * tool_length_mm * sin(angle)
+        swept_y = lift_y + uy * tool_length_mm * sin(angle)
+        swept_z = lift_z + tool_length_mm * (1.0 - cos(angle))
+        arc_check = guard.validate_pose([swept_x, swept_y, swept_z, rz])
+        if not arc_check.ok:
+            raise ReorientPlanningError(
+                arc_check.error_code, "J5 회전 중 TCP 궤적이 작업 범위를 벗어납니다.",
+            )
+
+    drag_x = swept_x + ux * drag_forward_mm
+    drag_y = swept_y + uy * drag_forward_mm
+    release_z = min(swept_z, max(guard.z_min_mm + 40.0, z_grasp + release_z_offset_mm))
+
+    def waypoint(stage, px, py, pz, action="move_linear", j5_delta=0.0):
+        pose = [px, py, pz, rz]
+        check = guard.validate_pose(pose)
+        if not check.ok:
+            raise ReorientPlanningError(check.error_code, check.message)
+        if not guard.check_j6_limit(current_j6_deg):
+            raise ReorientPlanningError("J6_LIMIT_VIOLATION", "예상 J6 각도가 허용 범위를 벗어났습니다.")
+        return MotionWaypoint(stage, pose, current_j6_deg, action=action,
+                              check_grip=action == "grasp", j5_delta_deg=j5_delta)
+
+    return [
+        waypoint("approach", pick_x, pick_y, transit_z),
+        waypoint("descend", pick_x, pick_y, z_grasp),
+        waypoint("grasp", pick_x, pick_y, z_grasp, "grasp"),
+        waypoint("pivot_lift", lift_x, lift_y, lift_z),
+        waypoint("pivot_tilt_j5", swept_x, swept_y, swept_z, "move_joint_j5", delta_j5),
+        waypoint("drag_over", drag_x, drag_y, release_z),
+        waypoint("release_flip", drag_x, drag_y, release_z, "release"),
+        waypoint("lift_after_flip", drag_x, drag_y, swept_z),
+        waypoint("restore_j5", lift_x, lift_y, lift_z, "move_joint_j5", -delta_j5),
+        waypoint("retreat", x, y, transit_z),
+    ]

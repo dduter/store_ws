@@ -398,3 +398,24 @@
 ### Follow-ups / Caveats
 - 실물 로봇(M0609 + RG2)에서 `robot_demo --suite safety` 및 `--suite estop` 실행으로 실물 비상정지 즉시 중단·복구 확인 후 4번(`hand_client` 웹캠/키보드 보완) 진행 예정.
 - 최종 상품·작업대 확정 시 P0 체크리스트(`grasp_depth_offset_mm` 3종, `gentle_tilt_deg`/`release_clearance_mm`, `scan_pose`/`buffer_slots`/폐기통 좌표) 실측 튜닝 필요.
+
+## 2026-11-27 14:13 — 방식 B `edge_pivot_flip` (가장자리 바닥 피벗 180° 반전) 기본 모드 적용 및 리뷰 반영
+
+### Goal / Background
+- `gentle_flip`(40° 기울기)만으로는 평평한 바닥에서 실제 180° 뒤집기가 어렵고, 공중 낙하 방식은 봉지과자 튕김 및 `J5=0°` 손목 특이점 위험이 있음을 확인함에 따라, 물체 가장자리를 집어 반대쪽 끝을 바닥 축(피벗) 삼아 `J5`를 60° 기울이며 앞으로 끌어 넘기는 무낙하·무특이점 방식(`edge_pivot_flip`)을 기본 `reorient_mode`로 구현함.
+
+### Responsible Agent(s)
+- **Codex (`codex exec -s workspace-write`)**: `plan_edge_pivot_flip`, `executor_node._execute_edge_pivot_flip`, `mock_robot.py` 지원, `control_params.yaml`/`products_catalog.yaml` 기본값 전환, `robot_demo.py` 순서 보정 및 단위 테스트 초기 구현.
+- **Codex (`codex exec review --uncommitted`)**: 크로스모델 리뷰 수행 — P1 1건(드래그 후 `restore_j5` 시 정기구학 궤적 미검증) 및 P2 1건(작업 영역 외곽 `x≈500mm`에서 드래그 공간 부족 시 기존 `gentle_flip` 대비 거부 회귀) 지적.
+- **Antigravity**: 리뷰 2건 전량 수정(`_check_j5_arc_fkin` 공용 헬퍼로 `pivot_tilt_j5`·`restore_j5` 양쪽 `fkin` 검증, 초기 계획 시 `OUT_OF_REACH` 발생하면 이동 전 `gentle_flip`으로 자동 폴백), 회귀 테스트 추가, 빌드·174건 단위 테스트·CycloneDDS `robot_demo` 10종 검증, `WORKLOG.md` 기록 및 푸시.
+
+### Detailed Changes
+- `/home/yongsoo/store_ws/config/control_params.yaml`, `products_catalog.yaml`: `reorient` 파라미터(`edge_offset_mm: 35.0`, `pivot_lift_mm: 70.0`, `pivot_tilt_deg: 60.0`, `drag_forward_mm: 55.0`, `release_z_offset_mm: 25.0`) 추가 및 일반 상품 3종(`paper_box`, `snack_bag`, `candy_chocolate`) 기본 `reorient_mode`를 `"edge_pivot_flip"`으로 전환.
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_edge_pivot_flip()` 추가(`|J5| >= 20°`·동부호 유지로 `±15°` 손목 특이점 완전 차단, 240mm 원호 + 전방 드래그 작업범위 검증, 10스텝 생성).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/executor_node.py`, `mock_robot.py`: `_execute_edge_pivot_flip()` 및 `_check_j5_arc_fkin()` 구현(기울기·복원 양쪽 `fkin` 검증, 공간 부족 시 이동 전 `gentle_flip` 자동 폴백).
+- `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/robot_demo.py`, `tests/`: `scan_pose` 순서 조정 및 `edge_pivot_flip`·특이점·폴백·`restore_j5` 정기구학 회귀 테스트 추가(총 174건).
+
+### Verification & Review
+- `colcon build --symlink-install --packages-select store_robot_control` 성공 (`1.07s`).
+- `pytest -q src/store_robot_control/tests` → **174 passed in 2.08s**.
+- `executor.launch.py dry_run:=true` + `ros2 run store_robot_control robot_demo --suite all --yes` (CycloneDDS) → **10 / 10 시나리오 전부 통과**.

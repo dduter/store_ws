@@ -19,7 +19,8 @@ from store_interfaces.srv import VerifyRemoteKey
 from ..core.blackbox_log import BlackboxLogger
 from ..core.grasp_planner import GraspPlanner
 from ..core.reorient_motion import (
-    MotionWaypoint, ReorientPlanningError, plan_gentle_flip, plan_reorient, plan_two_stage_flip,
+    MotionWaypoint, ReorientPlanningError, plan_edge_pivot_flip, plan_gentle_flip, plan_reorient,
+    plan_two_stage_flip,
 )
 from ..core.safety_guard import SafetyGuard, load_settings
 
@@ -169,6 +170,25 @@ class MockRobot(Node):
         guard = self._guard
         target = self._checked_pose(target)
         if action == "reorient":
+            if grasp_plan.reorient_mode == "edge_pivot_flip":
+                try:
+                    return plan_edge_pivot_flip(
+                        target, guard.poses["home_joint_deg"][4], self._j6, guard,
+                        edge_offset_mm=self._reorient.get("edge_offset_mm", 35.0),
+                        pivot_lift_mm=self._reorient.get("pivot_lift_mm", 70.0),
+                        pivot_tilt_deg=self._reorient.get("pivot_tilt_deg", 60.0),
+                        drag_forward_mm=self._reorient.get("drag_forward_mm", 55.0),
+                        release_z_offset_mm=self._reorient.get("release_z_offset_mm", 25.0),
+                    )
+                except ReorientPlanningError as exc:
+                    if exc.error_code != "OUT_OF_REACH":
+                        raise
+                    return plan_gentle_flip(
+                        target, guard.poses["home_joint_deg"][4], self._j6, guard,
+                        self._reorient.get("gentle_tilt_deg", 40.0),
+                        self._reorient.get("flip_lift_delta_mm", 90.0),
+                        release_clearance_mm=self._reorient.get("release_clearance_mm", 55.0),
+                    )
             if grasp_plan.reorient_mode == "gentle_flip":
                 return plan_gentle_flip(
                     target, guard.poses["home_joint_deg"][4], self._j6, guard,
@@ -232,7 +252,7 @@ class MockRobot(Node):
                             request.product_category, request.grasp_width_mm, request.grasp_force_n,
                         )
                     if action == "reorient" and grasp_plan.reorient_mode not in {
-                        "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
+                        "edge_pivot_flip", "gentle_flip", "two_stage_flip", "in_place_yaw_180", "flip_180_in_place",
                     }:
                         error_code = "INVALID_ACTION"
                         waypoints = []

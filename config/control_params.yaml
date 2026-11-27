@@ -15,6 +15,11 @@ reorient:
   gentle_tilt_deg: 40.0
   flip_lift_delta_mm: 90.0
   release_clearance_mm: 55.0
+  edge_offset_mm: 35.0
+  pivot_lift_mm: 70.0
+  pivot_tilt_deg: 60.0
+  drag_forward_mm: 55.0
+  release_z_offset_mm: 25.0
 
 gripper:
   type: "rg2"

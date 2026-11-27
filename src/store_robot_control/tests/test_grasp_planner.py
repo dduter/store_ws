@@ -19,7 +19,7 @@ def planner():
 def test_catalog_grasp(planner, category, expected):
     plan = planner.plan_grasp(category)
     assert plan.category == category
-    assert plan.reorient_mode == "gentle_flip"
+    assert plan.reorient_mode == "edge_pivot_flip"
     assert (
         plan.grasp_width_mm,
         plan.open_width_mm,
@@ -38,7 +38,7 @@ def test_default_grasp(planner, category):
     assert planner.plan_grasp(category) == planner.plan_grasp("defaults")
     assert planner.plan_grasp(category).grasp_width_mm == 20
     assert planner.plan_grasp(category).open_width_mm == 90
-    assert planner.plan_grasp(category).reorient_mode == "gentle_flip"
+    assert planner.plan_grasp(category).reorient_mode == "edge_pivot_flip"
 
 
 def test_overrides(planner):

@@ -1,5 +1,6 @@
 import json
 import sys
+from math import hypot
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -113,8 +114,8 @@ def test_all_actions(node, action, tmp_path):
         assert handle.feedback == [action]
     elif action == "reorient":
         assert handle.feedback == [
-            "open_gripper", "approach", "descend", "grasp", "lift", "gentle_tilt_j5",
-            "place_flip", "release_flip", "lift_after_flip", "restore_j5", "retreat",
+            "open_gripper", "approach", "descend", "grasp", "pivot_lift", "pivot_tilt_j5",
+            "drag_over", "release_flip", "lift_after_flip", "restore_j5", "retreat",
         ]
         assert list(result.final_pose) == [350, 20, 260, 0]
         assert -150 < node._robot.get_current_joints()[5] < 150
@@ -153,7 +154,9 @@ def test_grasp_failure_retreats_before_opening(node, action):
     assert not result.success
     assert result.stopped_for_safety
     assert result.error_code == "GRASP_FAIL"
-    assert list(result.final_pose) == [350, 20, 260, rz]
+    x, y = TARGET[:2]
+    edge_ratio = 1 - 35.0 / hypot(x, y) if action == "reorient" else 1.0
+    assert list(result.final_pose) == pytest.approx([x * edge_ratio, y * edge_ratio, 260, rz])
     assert node._gripper.get_width_mm() == 95
     assert handle.feedback[-2:] == ["grasp_fail_retreat", "grasp_fail_release"]
 
@@ -534,6 +537,7 @@ def test_remote_override_rejects_goals_and_reports_health(node, monkeypatch):
 
 @pytest.mark.parametrize("live_j5", [90.0, -90.0])
 def test_gentle_flip_uses_live_j5_and_caps_joint_speed(node, monkeypatch, live_j5):
+    node._grasp.categories["paper_box"]["reorient_mode"] = "gentle_flip"
     move_joint = node._robot.move_joint
     move_linear = node._robot.move_linear_4d
     commands = []
@@ -562,3 +566,99 @@ def test_gentle_flip_uses_live_j5_and_caps_joint_speed(node, monkeypatch, live_j
     assert tilted[4] == (50.0 if live_j5 > 0 else -50.0)
     assert (velocity, acceleration) == (20.0, 30.0)
     assert commands[1] == (tilted, before, 20.0, 30.0)
+
+
+def test_edge_pivot_uses_measured_tcp_and_restores_only_live_j5(node, monkeypatch):
+    node._velocity = 20.0
+    node._apply_depth = False
+    robot = node._robot
+    move_joint = robot.move_joint
+    move_linear = robot.move_linear_6d
+    fk_samples, joint_commands, tilted_moves = [], [], []
+    measured = [510.0, 8.0, 225.0, 2.0, 120.0, 0.0]
+
+    def predict(joints):
+        fk_samples.append(joints[4])
+        return measured
+
+    def joint(joints, vel, acc):
+        joint_commands.append((joints.copy(), vel, acc))
+        move_joint(joints, vel, acc)
+        if len(joint_commands) == 1:
+            robot._pose = measured.copy()
+
+    def linear(pose, vel, acc):
+        move_linear(pose, vel, acc)
+        if pose[4] == measured[4]:
+            tilted_moves.append((pose, vel, acc))
+            robot._joints[0] = 12.0
+
+    monkeypatch.setattr(robot, "predict_forward_pose", predict)
+    monkeypatch.setattr(robot, "move_joint", joint)
+    monkeypatch.setattr(robot, "move_linear_6d", linear)
+    result = run_goal(node, GoalHandle("reorient", target=[332.5, 0.0, 40.0, 0.0]))
+
+    assert result.success
+    assert fk_samples == [60.0, 30.0, 60.0, 90.0]
+    assert tilted_moves == [
+        ([565.0, 8.0, 65.0, *measured[3:]], 20.0, 30.0),
+        ([565.0, 8.0, 225.0, *measured[3:]], 20.0, 30.0),
+    ]
+    assert joint_commands == [
+        ([0.0, 0.0, 90.0, 0.0, 30.0, 0.0], 20.0, 30.0),
+        ([12.0, 0.0, 90.0, 0.0, 90.0, 0.0], 20.0, 30.0),
+    ]
+
+
+@pytest.mark.parametrize("unsafe_j5", [30.0, 79.0, None])
+def test_edge_pivot_blocks_unsafe_live_tilt(node, monkeypatch, unsafe_j5):
+    robot = node._robot
+    move_linear = robot.move_linear_4d
+
+    def linear(pose, *args, **kwargs):
+        move_linear(pose, *args, **kwargs)
+        if unsafe_j5 is not None and pose[2] == 110.0:
+            robot._joints[4] = unsafe_j5
+
+    def predict(joints):
+        assert unsafe_j5 is None
+        return [721.0, 0.0, 230.0, 0.0, 120.0, 0.0]
+
+    monkeypatch.setattr(robot, "move_linear_4d", linear)
+    monkeypatch.setattr(robot, "predict_forward_pose", predict)
+    monkeypatch.setattr(robot, "move_joint", lambda *_: pytest.fail("안전 검사 실패 후 J5 회전"))
+    node._apply_depth = False
+    handle = GoalHandle("reorient")
+    result = run_goal(node, handle)
+
+    assert result.error_code == "OUT_OF_REACH"
+    assert result.stopped_for_safety
+    assert handle.feedback[-1] == "pivot_lift"
+
+
+def test_edge_pivot_falls_back_to_gentle_flip_at_outer_display_edge(node):
+    # [500, 0, 40, 0]은 edge_pivot_flip 드래그가 x_max(720)를 넘지만 gentle_flip은 안전하게 통과
+    handle = GoalHandle("reorient", target=[500.0, 0.0, 40.0, 0.0])
+    result = run_goal(node, handle)
+    assert result.success
+    assert "gentle_tilt_j5" in handle.feedback
+    assert "place_flip" in handle.feedback
+
+
+def test_edge_pivot_checks_fkin_before_restore_j5(node, monkeypatch):
+    calls = []
+
+    def predict(joints):
+        calls.append(joints[4])
+        # 기울기 검사 2회(60, 30)는 통과, 복원 검사 첫 단계에서 범위 이탈 시뮬레이션
+        if len(calls) > 2:
+            return [725.0, 0.0, 230.0, 0.0, 180.0, 0.0]
+        return [400.0, 0.0, 200.0, 0.0, 120.0, 0.0]
+
+    monkeypatch.setattr(node._robot, "predict_forward_pose", predict)
+    handle = GoalHandle("reorient", target=[350.0, 20.0, 40.0, 0.0])
+    result = run_goal(node, handle)
+    assert not result.success
+    assert result.error_code == "OUT_OF_REACH"
+    assert result.stopped_for_safety
+    assert handle.feedback[-1] == "lift_after_flip"

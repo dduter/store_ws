@@ -8,7 +8,7 @@ from store_robot_control.nodes.robot_demo import build_scenarios, summarize_blac
 
 
 SAFETY = ["z_min_violation", "out_of_reach", "invalid_action"]
-MOTION = ["home", "scan_pose", "pick_place", "move_to_buffer", "restore_from_buffer", "reorient"]
+MOTION = ["home", "pick_place", "move_to_buffer", "restore_from_buffer", "reorient", "scan_pose"]
 
 
 @pytest.mark.parametrize("suite, names", [
