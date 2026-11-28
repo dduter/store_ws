@@ -12,7 +12,7 @@ from std_msgs.msg import Bool, String
 from store_interfaces.msg import NodeHealth
 from store_interfaces.srv import VerifyRemoteKey
 
-from .core.state_store import FrameBuffer, StateStore, ros_image_to_jpeg
+from .core.state_store import FrameBuffer, StateStore, parse_vest_payload, ros_image_to_jpeg
 from .server import create_app
 
 
@@ -25,10 +25,14 @@ class WebUiNode(Node):
         self._jpeg_quality = self.declare_parameter("jpeg_quality", 75).value
         self._max_width = self.declare_parameter("stream_max_width", 640).value
         heartbeat_period = self.declare_parameter("heartbeat_period_sec", 2.0).value
+        allow_vest_sim = bool(self.declare_parameter("allow_vest_simulation", True).value)
         self._state = StateStore(stale_timeout)
         self._frames = FrameBuffer()
+        self._shutdown = Event()
         self._callbacks = ReentrantCallbackGroup()
         self._text_pub = self.create_publisher(String, "/store/text_cmd", 10)
+        self._ptt_pub = self.create_publisher(Bool, "/store/voice/ptt_trigger", 10)
+        self._vest_pub = self.create_publisher(String, "/store/vision/vest_detected", 10)
         self._stop_pub = self.create_publisher(Bool, "/store/emergency_stop", 10)
         self._hand_pub = self.create_publisher(String, "/store/remote/hand_cmd", 1)
         self._health_pub = self.create_publisher(NodeHealth, "/store/node_health", 10)
@@ -42,6 +46,7 @@ class WebUiNode(Node):
         )
         for kind, topic, handler, qos in (
             (String, "/store/ui_snapshot", lambda msg: self._state.update_snapshot(msg.data), 10),
+            (String, "/store/vision/vest_detected", self._on_vest_detected, 10),
             (NodeHealth, "/store/node_health", self._on_health, 10),
             (String, "/store/mode/state", lambda msg: self._state.set_mode(msg.data), 10),
             (Bool, "/store/mode/remote_override",
@@ -59,7 +64,9 @@ class WebUiNode(Node):
             )
         self.create_timer(heartbeat_period, self._heartbeat, callback_group=self._callbacks)
 
-        app = create_app(self._state, self, self._frames)
+        app = create_app(
+            self._state, self, self._frames, allow_vest_simulation=allow_vest_sim,
+        )
         self._server = uvicorn.Server(uvicorn.Config(
             app, host=self._host, port=self._port, log_level="warning",
             access_log=False, timeout_graceful_shutdown=1,
@@ -76,6 +83,7 @@ class WebUiNode(Node):
             self.get_logger().error(f"웹 서버를 시작할 수 없습니다 ({self._host}:{self._port}).")
 
     def stop_http(self):
+        self._shutdown.set()
         self._server.should_exit = True
         if self._http_thread.ident is not None:
             self._http_thread.join(timeout=3.0)
@@ -98,6 +106,38 @@ class WebUiNode(Node):
         )
         if jpeg is not None:
             self._frames.update(name, jpeg)
+
+    def _on_vest_detected(self, msg):
+        self._state.update_vest_detection(*parse_vest_payload(msg.data))
+
+    def publish_ptt_trigger(self):
+        self._ptt_pub.publish(Bool(data=True))
+
+    def publish_vest_simulation(self, detected: bool, frames: int = 5) -> bool:
+        if not detected:
+            # 직원 모드의 5초 미감지 조건을 충족할 때까지 대기하되, 대기 중 새 조끼 감지가 들어오면 중단합니다.
+            for _ in range(2):
+                view = self._state.snapshot()
+                vest = view["vest_status"]
+                if view["mode"] != "EMPLOYEE" or not vest["detected"]:
+                    break
+                delay = max(0.0, 5.0 - (vest["age_sec"] or 0.0))
+                if delay <= 0.0:
+                    break
+                if self._shutdown.wait(timeout=delay):
+                    return False
+            view = self._state.snapshot()
+            vest = view["vest_status"]
+            if view["mode"] == "EMPLOYEE" and vest["detected"] and (vest["age_sec"] or 0.0) < 5.0:
+                return False
+        payload = json.dumps({
+            "detected": detected, "confidence": 0.99 if detected else 0.0, "source": "web_ui_sim",
+        })
+        for index in range(frames):
+            if index and self._shutdown.wait(timeout=0.02):
+                return False
+            self._vest_pub.publish(String(data=payload))
+        return True
 
     def publish_text_cmd(self, text):
         self._text_pub.publish(String(data=text))

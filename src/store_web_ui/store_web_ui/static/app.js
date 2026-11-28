@@ -8,6 +8,8 @@ let toastTimer, jogTimer, gripperTimer, pointer, inFlight, gripperInFlight, pend
 let gripperGen = 0;
 let remoteEnabled = false;
 let remoteToken = null;
+let previousMode;
+const viewNames = ["customer", "admin"];
 
 function element(tag, value, className) {
   const node = document.createElement(tag);
@@ -143,7 +145,53 @@ function renderGraph(graph) {
   byId("graph").replaceChildren(svg);
 }
 
+function selectView(name) {
+  if (name === "customer" && !byId("view-admin").hidden) stopJog();
+  for (const view of viewNames) {
+    byId(`view-${view}`).hidden = view !== name;
+    byId(`${view}-view-tab`).setAttribute("aria-pressed", String(view === name));
+  }
+}
+
+function renderRemoteRequest(request) {
+  byId("request-dot").hidden = !request.active;
+  byId("customer-request").hidden = !request.active;
+  byId("admin-request").hidden = !request.active;
+  const button = byId("cigarette-request");
+  button.disabled = request.active || button.dataset.pending === "true";
+  byId("admin-request-details").textContent = [request.item, request.message].filter(Boolean).join(" · ");
+}
+
+function renderVest(vest, allowSimulation = true) {
+  const source = vest.source === "web_ui_sim" ? "시뮬레이션" : "자동 비전";
+  const status = vest.detected ? `감지됨 (${Math.round(vest.confidence * 100)}%)` : "미감지";
+  setBadge("vest-status", vest.live ? `형광조끼: ${status} · ${source}` : "형광조끼: 미연결",
+    !vest.live ? "" : vest.detected ? "ok" : "info");
+  for (const id of ["simulate-employee", "simulate-customer"]) {
+    byId(id).hidden = !allowSimulation;
+  }
+}
+
+function renderCustomerInventory(inventory) {
+  const excluded = new Set(["EXPIRED", "MARKERCONTAMINATED", "MARKER_CONTAMINATED", "UNREADABLE", "UNJUDGEABLE"]);
+  const cards = inventory.filter((item) => item?.name && !excluded.has(String(item.status).toUpperCase())).map((item) => {
+    const status = String(item.status || "").toUpperCase();
+    const label = {NORMAL: "구매 가능", REAR_FACING: "뒷면 감지"}[status] || item.status || "상태 확인 중";
+    const card = element("li");
+    card.append(element("strong", item.name), element("span", label, `badge ${statusColors[status] || ""}`));
+    return card;
+  });
+  byId("customer-inventory").replaceChildren(...(cards.length ? cards : [element("li", "표시할 매대 상품이 없습니다.", "empty")]));
+}
+
 function render(state) {
+  if (previousMode !== state.mode && byId("auto-follow").checked) {
+    if (state.mode === "CUSTOMER") selectView("customer");
+    if (state.mode === "EMPLOYEE" || state.mode === "REMOTE") selectView("admin");
+  }
+  previousMode = state.mode;
+  renderRemoteRequest(state.remote_request);
+  renderVest(state.vest_status, state.allow_vest_simulation !== false);
   remoteEnabled = state.remote_override;
   if (!remoteEnabled) remoteToken = null;
   setBadge("mode", state.mode, "info");
@@ -162,6 +210,7 @@ function render(state) {
   const nextLog = JSON.stringify([state.agent_log, state.ui_events]);
   if (nextLog !== logKey) {
     logKey = nextLog;
+    byId("customer-progress").textContent = state.agent_log.at(-1) || "주문을 기다리고 있습니다.";
     renderFeed("agent-log", [...state.agent_log].reverse());
     renderFeed("events", [...state.ui_events].reverse().map((entry) =>
       `${new Date(entry.time).toLocaleTimeString("ko-KR")} · ${entry.message}`));
@@ -169,6 +218,7 @@ function render(state) {
   const nextInventory = JSON.stringify([state.inventory, state.disposal_history]);
   if (nextInventory !== inventoryKey) {
     inventoryKey = nextInventory;
+    renderCustomerInventory(state.inventory);
     renderTable("inventory-rows", state.inventory, ["track_id", "name", "status", "depth_layer"]);
     renderTable("disposal-rows", state.disposal_history, ["track_id", "reason"]);
   }
@@ -193,16 +243,55 @@ function connect() {
   };
 }
 
-byId("command-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const input = byId("command");
-  const text = input.value;
+async function sendText(text, input) {
   try {
     await post("/api/text_cmd", {text});
-    if (input.value === text) input.value = "";
+    if (input?.value === text) input.value = "";
     toast("텍스트 명령을 보냈습니다.");
   } catch (error) { toast(error.message, true); }
-});
+}
+
+for (const name of viewNames) {
+  byId(`${name}-view-tab`).addEventListener("click", () => selectView(name));
+}
+for (const prefix of ["", "customer-"]) {
+  byId(`${prefix}command-form`).addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = byId(`${prefix}command`);
+    sendText(input.value, input);
+  });
+}
+for (const button of document.querySelectorAll("[data-order]")) {
+  button.addEventListener("click", () => sendText(button.dataset.order));
+}
+
+function bindAction(id, path, body, success) {
+  byId(id).addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.dataset.pending = "true";
+    try {
+      const response = await post(path, body);
+      if (response.remote_request) renderRemoteRequest(response.remote_request);
+      toast(success);
+    } catch (error) { toast(error.message, true); }
+    finally {
+      delete button.dataset.pending;
+      button.disabled = id === "cigarette-request" && !byId("customer-request").hidden;
+    }
+  });
+}
+
+for (const id of ["customer-ptt", "admin-ptt"]) {
+  bindAction(id, "/api/voice/ptt", {}, "음성 입력 시작을 요청했습니다.");
+}
+bindAction("cigarette-request", "/api/remote_request", {
+  active: true, item: "모형 담배", message: "고객이 담배 구매를 요청했습니다.", send_text_cmd: true,
+}, "관리자를 호출했습니다.");
+bindAction("complete-request", "/api/remote_request", {active: false}, "요청을 처리했습니다.");
+bindAction("simulate-employee", "/api/vest_simulate", {detected: true}, "직원 모드 전환을 요청했습니다.");
+bindAction("simulate-customer", "/api/vest_simulate", {detected: false}, "고객 모드 복귀를 요청했습니다.");
+
 byId("presets").addEventListener("click", (event) => {
   if (event.target.tagName !== "BUTTON") return;
   byId("command").value = event.target.textContent;

@@ -3,90 +3,143 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>24시 무인편의점 협동로봇 관제 대시보드</title>
+  <title>24시 무인편의점 협동로봇 관제</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
   <header class="top">
     <div>
-      <h1>24시 무인편의점 협동로봇 관제 대시보드</h1>
+      <h1>24시 무인편의점 협동로봇 관제</h1>
       <div class="badges"><span id="mode" class="badge">—</span><span id="socket" class="badge">연결 중</span><span id="estop-state" class="badge">비상 정지 상태 확인 중</span></div>
     </div>
     <div class="actions">
       <button id="estop" class="danger">비상 정지 (E-STOP)</button>
       <button id="resume">비상 정지 해제</button>
     </div>
+    <nav class="view-switcher" aria-label="화면 선택">
+      <div class="actions" role="group" aria-label="관제 화면">
+        <button id="customer-view-tab" type="button" aria-controls="view-customer" aria-pressed="true">🛒 고객 키오스크</button>
+        <button id="admin-view-tab" type="button" aria-controls="view-admin" aria-pressed="false">🛠️ 직원 · 관리자 관제 <span id="request-dot" hidden>새 요청</span></button>
+      </div>
+      <label class="auto-follow"><input id="auto-follow" type="checkbox" checked> 형광조끼 자동 화면 전환</label>
+    </nav>
   </header>
   <main>
-    <section>
-      <h2>실시간 카메라</h2>
-      <div class="camera-grid">
-        <figure><figcaption>RealSense Eye-in-Hand <span class="badge" id="realsense">대기</span></figcaption>
-          <img src="/stream/realsense" alt="RealSense Eye-in-Hand 영상"></figure>
-        <figure><figcaption>매장 웹캠 <span class="badge" id="webcam">대기</span></figcaption>
-          <img src="/stream/webcam" alt="매장 웹캠 영상"></figure>
-      </div>
-    </section>
-    <div class="workspace">
-      <section>
-        <h2>텍스트 명령 및 로그</h2>
-        <form id="command-form" class="actions">
-          <input id="command" aria-label="텍스트 명령" placeholder="로봇에게 요청할 내용을 입력하세요" required>
-          <button class="primary">전송</button>
+    <div id="view-customer" class="view" aria-labelledby="customer-view-tab">
+      <section class="kiosk-order">
+        <h2>원하시는 상품을 말씀하거나 아래 버튼을 눌러 주세요</h2>
+        <button id="customer-ptt" class="primary ptt" type="button">🎙️ 음성으로 주문하기 (PTT)</button>
+        <form id="customer-command-form" class="actions">
+          <input id="customer-command" aria-label="텍스트 주문" placeholder="주문하실 상품을 입력해 주세요" required>
+          <button class="primary">주문 보내기</button>
         </form>
-        <div class="actions presets" id="presets">
-          <button>빼빼로 하나 줘</button><button>파란색 짠 과자 하나 줘</button>
-          <button>유통기한 지난 거 폐기통에 버려줘</button><button>입고 정리해줘</button>
+        <div class="order-cards">
+          <button type="button" data-order="빼빼로 하나 줘">빼빼로 하나 줘</button>
+          <button type="button" data-order="파란색 짠 과자 하나 줘">파란색 짠 과자 하나 줘</button>
+          <button type="button" data-order="음료수 하나 줘">음료수 하나 줘</button>
+          <button type="button" id="cigarette-request" class="cigarette">🚬 담배 구매 요청 <small>(성인 인증 · 관리자 원격 호출)</small></button>
         </div>
-        <div class="log-grid">
-          <div><h3>에이전트 로그</h3><ul class="feed" id="agent-log"></ul></div>
-          <div><h3>웹 UI 이벤트</h3><ul class="feed" id="events"></ul></div>
-        </div>
+        <p id="customer-request" class="request-notice" role="status" hidden>담배 구매 요청을 접수했습니다. 성인 인증과 상품 전달을 위해 관리자의 안내를 기다려 주세요.</p>
       </section>
       <section>
-        <h2>관리자 원격 조작 <span class="badge" id="remote-state">비활성</span></h2>
-        <form id="remote-form" class="actions">
-          <input id="admin-key" type="password" autocomplete="off" aria-label="관리자 키" placeholder="관리자 키" required>
-          <button class="primary" value="on">원격 모드 활성화</button><button value="off">원격 모드 해제</button>
-        </form>
-        <fieldset id="controls" disabled>
-          <legend>XY/Z 이동</legend>
-          <label class="step">이동량 <input id="step" type="range" min="20" max="60" value="40"> <output id="step-value" for="step">40 px</output></label>
-          <div class="jog">
-            <button class="up" data-vector="0,1,0" aria-label="위">↑</button>
-            <button class="left" data-vector="-1,0,0" aria-label="왼쪽">←</button>
-            <button class="down" data-vector="0,-1,0" aria-label="아래">↓</button>
-            <button class="right" data-vector="1,0,0" aria-label="오른쪽">→</button>
-            <button class="zplus" data-vector="0,0,1">+Z</button>
-            <button class="zminus" data-vector="0,0,-1">−Z</button>
-          </div>
-          <div class="actions gripper"><span>그리퍼</span><button id="open">열기</button><button id="close">닫기</button><button id="stop" class="danger">즉시 정지 (STOP)</button></div>
-        </fieldset>
+        <h2>진행 안내</h2>
+        <p id="customer-progress" role="status">주문을 기다리고 있습니다.</p>
+      </section>
+      <section>
+        <h2>현재 구매 가능한 매대 상품</h2>
+        <ul id="customer-inventory" class="product-list"></ul>
       </section>
     </div>
-    <section>
-      <h2>노드 상태</h2>
-      <div class="health" id="health"></div>
-    </section>
-    <section>
-      <h2>재고 및 폐기 이력</h2>
-      <div class="actions tabs" role="tablist" aria-label="재고 및 폐기 이력">
-        <button id="inventory-tab" role="tab" aria-controls="inventory" aria-selected="true">재고</button>
-        <button id="disposal-tab" role="tab" aria-controls="disposal" aria-selected="false" tabindex="-1">폐기 이력</button>
+    <div id="view-admin" class="view" aria-labelledby="admin-view-tab" hidden>
+      <section id="admin-request" class="request-notice" hidden>
+        <h2>고객 원격 요청 알림</h2>
+        <p role="status">고객 담배 구매 요청이 접수되었습니다. 아래 관리자 원격 조작으로 전달해 주세요.</p>
+        <p id="admin-request-details"></p>
+        <button id="complete-request" type="button">요청 처리 완료</button>
+      </section>
+      <section>
+        <div class="vest-heading">
+          <h2>형광조끼 자동 모드</h2>
+          <span id="vest-status" class="badge">형광조끼: 미연결</span>
+        </div>
+        <p class="hint">추후 형광조끼 YOLO 학습 완료 시 <code>/store/vision/vest_detected</code>로 자동 전환됩니다.</p>
+        <div class="actions">
+          <button id="simulate-employee" type="button">직원 모드 전환 (조끼 시뮬)</button>
+          <button id="simulate-customer" type="button">고객 모드 복귀 (조끼 해제 시뮬)</button>
+        </div>
+      </section>
+      <section>
+        <h2>실시간 카메라</h2>
+        <div class="camera-grid">
+          <figure><figcaption>RealSense Eye-in-Hand <span class="badge" id="realsense">대기</span></figcaption>
+            <img src="/stream/realsense" alt="RealSense Eye-in-Hand 영상"></figure>
+          <figure><figcaption>매장 웹캠 <span class="badge" id="webcam">대기</span></figcaption>
+            <img src="/stream/webcam" alt="매장 웹캠 영상"></figure>
+        </div>
+      </section>
+      <div class="workspace">
+        <section>
+          <h2>직원 명령 · PTT · 로그</h2>
+          <form id="command-form" class="actions">
+            <input id="command" aria-label="텍스트 명령" placeholder="로봇에게 요청할 내용을 입력하세요" required>
+            <button class="primary">전송</button>
+          </form>
+          <div class="actions presets" id="presets">
+            <button>입고 정리해줘</button><button>유통기한 지난 거 폐기통에 버려줘</button>
+            <button>폐기 박스 전달해줘</button>
+          </div>
+          <button id="admin-ptt" class="primary ptt" type="button">🎙️ 음성 입력 (PTT)</button>
+          <div class="log-grid">
+            <div><h3>에이전트 로그</h3><ul class="feed" id="agent-log"></ul></div>
+            <div><h3>웹 UI 이벤트</h3><ul class="feed" id="events"></ul></div>
+          </div>
+        </section>
+        <section>
+          <h2>관리자 원격 조작 <span class="badge" id="remote-state">비활성</span></h2>
+          <p class="hint">모형 담배 전달 / 수동 제어</p>
+          <form id="remote-form" class="actions">
+            <input id="admin-key" type="password" autocomplete="off" aria-label="관리자 키" placeholder="관리자 키" required>
+            <button class="primary" value="on">원격 모드 활성화</button><button value="off">원격 모드 해제</button>
+          </form>
+          <fieldset id="controls" disabled>
+            <legend>XY/Z 이동</legend>
+            <label class="step">이동량 <input id="step" type="range" min="20" max="60" value="40"> <output id="step-value" for="step">40 px</output></label>
+            <div class="jog">
+              <button class="up" data-vector="0,1,0" aria-label="위">↑</button>
+              <button class="left" data-vector="-1,0,0" aria-label="왼쪽">←</button>
+              <button class="down" data-vector="0,-1,0" aria-label="아래">↓</button>
+              <button class="right" data-vector="1,0,0" aria-label="오른쪽">→</button>
+              <button class="zplus" data-vector="0,0,1">+Z</button>
+              <button class="zminus" data-vector="0,0,-1">−Z</button>
+            </div>
+            <div class="actions gripper"><span>그리퍼</span><button id="open">열기</button><button id="close">닫기</button><button id="stop" class="danger">즉시 정지 (STOP)</button></div>
+          </fieldset>
+        </section>
       </div>
-      <div id="inventory" role="tabpanel" aria-labelledby="inventory-tab"><table>
-        <thead><tr><th>추적 ID</th><th>상품명</th><th>상태</th><th>깊이</th></tr></thead><tbody id="inventory-rows"></tbody>
-      </table></div>
-      <div id="disposal" role="tabpanel" aria-labelledby="disposal-tab" hidden><table>
-        <thead><tr><th>추적 ID</th><th>폐기 사유</th></tr></thead><tbody id="disposal-rows"></tbody>
-      </table></div>
-    </section>
-    <section>
-      <h2>상품 지식 그래프</h2>
-      <div class="badges" id="kg-stats"></div>
-      <div class="graph-scroll" id="graph"></div>
-    </section>
+      <section>
+        <h2>노드 상태 (Heartbeat)</h2>
+        <div class="health" id="health"></div>
+      </section>
+      <section>
+        <h2>재고 및 폐기 이력</h2>
+        <div class="actions tabs" role="tablist" aria-label="재고 및 폐기 이력">
+          <button id="inventory-tab" role="tab" aria-controls="inventory" aria-selected="true">재고</button>
+          <button id="disposal-tab" role="tab" aria-controls="disposal" aria-selected="false" tabindex="-1">폐기 이력</button>
+        </div>
+        <div id="inventory" role="tabpanel" aria-labelledby="inventory-tab"><table>
+          <thead><tr><th>추적 ID</th><th>상품명</th><th>상태</th><th>깊이</th></tr></thead><tbody id="inventory-rows"></tbody>
+        </table></div>
+        <div id="disposal" role="tabpanel" aria-labelledby="disposal-tab" hidden><table>
+          <thead><tr><th>추적 ID</th><th>폐기 사유</th></tr></thead><tbody id="disposal-rows"></tbody>
+        </table></div>
+      </section>
+      <section>
+        <h2>상품 지식 그래프</h2>
+        <div class="badges" id="kg-stats"></div>
+        <div class="graph-scroll" id="graph"></div>
+      </section>
+    </div>
   </main>
   <output id="toast" role="status" hidden></output>
 </body>

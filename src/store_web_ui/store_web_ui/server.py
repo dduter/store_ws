@@ -43,7 +43,7 @@ async def stream_frames(frame_buffer, camera_name, placeholder):
         await asyncio.sleep(1 / 15 if live else 0.5)
 
 
-def create_app(state_store, bridge, frame_buffer):
+def create_app(state_store, bridge, frame_buffer, *, allow_vest_simulation: bool = True):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     static_dir = Path(__file__).resolve().parent / "static"
     static = {
@@ -57,9 +57,14 @@ def create_app(state_store, bridge, frame_buffer):
         for name, title in (("realsense", "RealSense Eye-in-Hand"), ("webcam", "Store Webcam"))
     }
     active_remote_token = {"value": None}
+    vest_simulation_lock = asyncio.Lock()
 
     def snapshot():
-        return {**state_store.snapshot(), "cameras": frame_buffer.status()}
+        return {
+            **state_store.snapshot(),
+            "cameras": frame_buffer.status(),
+            "allow_vest_simulation": allow_vest_simulation,
+        }
 
     @app.get("/")
     async def index():
@@ -116,6 +121,52 @@ def create_app(state_store, bridge, frame_buffer):
         bridge.publish_text_cmd(text)
         state_store.record_event("text_cmd", text)
         return {"ok": True, "text": text}
+
+    @app.post("/api/voice/ptt")
+    async def voice_ptt():
+        bridge.publish_ptt_trigger()
+        state_store.record_event("voice_ptt", "음성 입력(PTT) 시작 요청")
+        return {"ok": True}
+
+    @app.post("/api/remote_request")
+    async def remote_request(request: Request):
+        body = await read_object(request)
+        active = body.get("active")
+        item = body.get("item", "모형 담배")
+        message = body.get("message", "")
+        send_text_cmd = body.get("send_text_cmd", False)
+        if (type(active) is not bool or type(send_text_cmd) is not bool
+                or not isinstance(item, str) or not isinstance(message, str)):
+            raise HTTPException(422, "원격 요청의 활성 상태, 상품명, 메시지와 명령 전송 설정을 확인하세요.")
+        cleaned_item = item.strip()
+        cleaned_message = message.strip()
+        state_store.set_remote_request(active, cleaned_item, cleaned_message)
+        if active and send_text_cmd:
+            requested_item = (body.get("item") or "").strip() if isinstance(body.get("item"), str) else ""
+            bridge.publish_text_cmd(f"{requested_item or '담배'} 하나 주세요")
+        state_store.record_event(
+            "remote_request",
+            (cleaned_message or f"{cleaned_item or '상품'} 구매 요청") if active else "원격 요청 처리 완료",
+        )
+        return {"ok": True, "remote_request": state_store.snapshot()["remote_request"]}
+
+    @app.post("/api/vest_simulate")
+    async def vest_simulate(request: Request):
+        if not allow_vest_simulation:
+            raise HTTPException(403, "형광조끼 자동 인식 전용 모드에서는 수동 조끼 시뮬레이션이 비활성화되어 있습니다.")
+        detected = (await read_object(request)).get("detected")
+        if type(detected) is not bool:
+            raise HTTPException(422, "조끼 감지 상태는 불리언이어야 합니다.")
+        async with vest_simulation_lock:
+            sent = await asyncio.to_thread(bridge.publish_vest_simulation, detected)
+            if sent is False:
+                raise HTTPException(409, "실시간 형광조끼 감지가 유지 중이거나 종료 중이어서 시뮬레이션을 완료하지 못했습니다.")
+            state_store.update_vest_detection(detected, 0.99 if detected else 0.0, source="web_ui_sim")
+            state_store.record_event(
+                "vest_sim",
+                "직원 모드 전환 요청 (조끼 시뮬)" if detected else "고객 모드 복귀 요청 (조끼 해제 시뮬)",
+            )
+        return {"ok": True, "detected": detected}
 
     @app.post("/api/emergency_stop")
     async def emergency_stop(request: Request):

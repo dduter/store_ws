@@ -2,6 +2,8 @@ import asyncio
 import importlib
 import json
 import sys
+from datetime import datetime, timedelta
+from threading import get_ident
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -89,6 +91,62 @@ def test_stale_health(monkeypatch):
     assert state.version == version
 
 
+@pytest.mark.parametrize(("raw", "expected"), [
+    (" TRUE ", (True, 1.0, "vision")),
+    ("1", (True, 1.0, "vision")),
+    ("false", (False, 0.0, "vision")),
+    ("0", (False, 0.0, "vision")),
+    ('{"detected":true,"confidence":0.99,"source":"web_ui_sim"}', (True, 0.99, "web_ui_sim")),
+    ('{"detected":false,"confidence":0}', (False, 0.0, "vision")),
+    ('{"detected":"false","confidence":1}', (False, 0.0, "vision")),
+    ('{"detected":true,"confidence":NaN}', (True, 0.0, "vision")),
+    ('{"detected":true,"confidence":1e999}', (True, 0.0, "vision")),
+    ("{", (False, 0.0, "vision")),
+    ("[]", (False, 0.0, "vision")),
+])
+def test_parse_vest_payload(raw, expected):
+    assert core.parse_vest_payload(raw) == expected
+
+
+def test_vest_detection_liveness(monkeypatch):
+    state = core.StateStore(stale_timeout_sec=6)
+    assert state.snapshot()["vest_status"] == {
+        "detected": False, "confidence": 0.0, "source": "", "live": False, "age_sec": None,
+    }
+    monkeypatch.setattr(core, "monotonic", lambda: 100.0)
+    state.update_vest_detection(True, 0.99, "web_ui_sim")
+    assert state.version == 1
+    assert state.snapshot()["vest_status"] == {
+        "detected": True, "confidence": 0.99, "source": "web_ui_sim", "live": True, "age_sec": 0.0,
+    }
+    monkeypatch.setattr(core, "monotonic", lambda: 106.0)
+    assert state.snapshot()["vest_status"]["live"] is True
+    monkeypatch.setattr(core, "monotonic", lambda: 106.25)
+    vest = state.snapshot()["vest_status"]
+    assert vest["live"] is False and vest["age_sec"] == 6.25
+    assert state.version == 1
+    state.update_vest_detection(False, 0.0)
+    assert state.version == 2
+    assert state.snapshot()["vest_status"] == {
+        "detected": False, "confidence": 0.0, "source": "vision", "live": True, "age_sec": 0.0,
+    }
+
+
+def test_remote_request_state():
+    state = core.StateStore()
+    empty = {"active": False, "item": "", "message": "", "requested_at": ""}
+    assert state.snapshot()["remote_request"] == empty
+    state.set_remote_request(True, "모형 담배", "요청")
+    request = state.snapshot()["remote_request"]
+    assert request == {"active": True, "item": "모형 담배", "message": "요청", "requested_at": request["requested_at"]}
+    assert datetime.fromisoformat(request["requested_at"]).utcoffset() == timedelta(0)
+    request["item"] = ""
+    assert state.snapshot()["remote_request"]["item"] == "모형 담배"
+    state.set_remote_request(False, "모형 담배", "요청")
+    assert state.version == 2
+    assert state.snapshot()["remote_request"] == empty
+
+
 @pytest.mark.parametrize(("encoding", "pixel", "expected"), [
     ("rgb8", [220, 80, 20], [20, 80, 220]),
     ("bgr8", [20, 80, 220], [20, 80, 220]),
@@ -131,6 +189,12 @@ def test_index_static_and_state(dashboard):
     assert "24시 무인편의점" in html
     assert 'data-vector="0,1,0"' in html and 'data-vector="0,-1,0"' in html
     assert "http://" not in html and "https://" not in html
+    for element_id in (
+        "view-customer", "view-admin", "customer-command-form", "customer-ptt", "admin-ptt",
+        "cigarette-request", "request-dot",
+    ):
+        assert f'id="{element_id}"' in html
+    assert 'id="auto-follow" type="checkbox" checked' in html
     for name in ("app.js", "style.css"):
         assert client.get(f"/static/{name}").status_code == 200
     state.set_mode("EMPLOYEE")
@@ -156,6 +220,67 @@ def test_text_and_estop(dashboard):
     assert [event["action"] for event in state.snapshot()["ui_events"]] == [
         "text_cmd", "emergency_stop", "emergency_stop",
     ]
+
+
+def test_voice_ptt(dashboard):
+    client, state, bridge, *_ = dashboard
+    assert client.post("/api/voice/ptt").json() == {"ok": True}
+    bridge.publish_ptt_trigger.assert_called_once_with()
+    event = state.snapshot()["ui_events"][-1]
+    assert (event["action"], event["message"]) == ("voice_ptt", "음성 입력(PTT) 시작 요청")
+
+
+def test_remote_request_api(dashboard):
+    client, state, bridge, *_ = dashboard
+    path = "/api/remote_request"
+    for invalid in ([], {}, {"active": 1}, {"active": True, "item": 1},
+                    {"active": True, "message": None}, {"active": True, "send_text_cmd": "true"}):
+        assert client.post(path, json=invalid).status_code == 422
+    assert state.version == 0
+    bridge.publish_text_cmd.assert_not_called()
+    response = client.post(path, json={
+        "active": True, "item": "모형 담배", "message": "고객 요청", "send_text_cmd": True,
+    }).json()
+    request = state.snapshot()["remote_request"]
+    assert response == {"ok": True, "remote_request": request}
+    assert request["active"] is True and request["message"] == "고객 요청"
+    bridge.publish_text_cmd.assert_called_once_with("모형 담배 하나 주세요")
+    assert client.post(path, json={"active": False, "send_text_cmd": True}).json() == {
+        "ok": True, "remote_request": {"active": False, "item": "", "message": "", "requested_at": ""},
+    }
+    bridge.publish_text_cmd.assert_called_once()
+    assert client.post(path, json={"active": True, "send_text_cmd": True}).json()["remote_request"]["item"] == "모형 담배"
+    bridge.publish_text_cmd.assert_called_with("담배 하나 주세요")
+
+
+def test_vest_simulate_api(dashboard):
+    client, state, bridge, *_ = dashboard
+    path = "/api/vest_simulate"
+    caller = get_ident()
+    worker_threads = []
+    bridge.publish_vest_simulation.side_effect = lambda detected: worker_threads.append(get_ident())
+    for invalid in ({}, {"detected": 1}, {"detected": "true"}):
+        assert client.post(path, json=invalid).status_code == 422
+    assert state.version == 0
+    bridge.publish_vest_simulation.assert_not_called()
+    for detected, confidence in ((True, 0.99), (False, 0.0)):
+        assert client.post(path, json={"detected": detected}).json() == {"ok": True, "detected": detected}
+        bridge.publish_vest_simulation.assert_called_with(detected)
+        vest = state.snapshot()["vest_status"]
+        assert vest["detected"] is detected and vest["confidence"] == confidence
+        assert vest["live"] is True and vest["source"] == "web_ui_sim"
+        assert state.snapshot()["ui_events"][-1]["action"] == "vest_sim"
+    assert len(worker_threads) == 2 and all(worker != caller for worker in worker_threads)
+
+
+def test_vest_simulate_disabled_in_production_mode():
+    state = core.StateStore()
+    frames = core.FrameBuffer()
+    bridge = Mock()
+    client = ApiClient(create_app(state, bridge, frames, allow_vest_simulation=False))
+    assert client.get("/api/state").json()["allow_vest_simulation"] is False
+    assert client.post("/api/vest_simulate", json={"detected": True}).status_code == 403
+    bridge.publish_vest_simulation.assert_not_called()
 
 
 def test_remote_verify(dashboard):

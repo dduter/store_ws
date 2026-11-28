@@ -10,6 +10,25 @@ import cv2
 import numpy as np
 
 
+def parse_vest_payload(raw: str) -> tuple[bool, float, str]:
+    value = raw.strip().lower()
+    if value in ("true", "1"):
+        return True, 1.0, "vision"
+    if value in ("false", "0"):
+        return False, 0.0, "vision"
+    try:
+        payload = json.loads(raw)
+    except (ValueError, RecursionError):
+        return False, 0.0, "vision"
+    if not isinstance(payload, dict) or type(payload.get("detected")) is not bool:
+        return False, 0.0, "vision"
+    confidence = payload.get("confidence", 0.0)
+    if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
+        confidence = 0.0
+    source = payload.get("source")
+    return payload["detected"], float(confidence), source if isinstance(source, str) and source else "vision"
+
+
 class StateStore:
     def __init__(self, stale_timeout_sec=6.0):
         self._lock = RLock()
@@ -21,6 +40,9 @@ class StateStore:
         self._mode_topic_seen = False
         self._ui_events = deque(maxlen=50)
         self._health = {}
+        self._vest_status = {"detected": False, "confidence": 0.0, "source": ""}
+        self._vest_received = None
+        self._remote_request = {"active": False, "item": "", "message": "", "requested_at": ""}
         self._payload = {
             "inventory": [], "disposal_history": [], "agent_log": [],
             "kg_graph": {"nodes": [], "links": [], "stats": {}},
@@ -106,6 +128,22 @@ class StateStore:
             })
             self._version += 1
 
+    def update_vest_detection(self, detected: bool, confidence: float, source: str = "vision"):
+        with self._lock:
+            self._vest_status = {"detected": detected, "confidence": confidence, "source": source}
+            self._vest_received = monotonic()
+            self._version += 1
+
+    def set_remote_request(self, active: bool, item: str = "", message: str = ""):
+        with self._lock:
+            self._remote_request = {
+                "active": active,
+                "item": item if active else "",
+                "message": message if active else "",
+                "requested_at": datetime.now(timezone.utc).isoformat() if active else "",
+            }
+            self._version += 1
+
     def snapshot(self):
         with self._lock:
             now = monotonic()
@@ -115,7 +153,13 @@ class StateStore:
                 health[name] = {
                     **deepcopy(status), "age_sec": age, "stale": age > self._stale_timeout,
                 }
+            vest_age = now - self._vest_received if self._vest_received is not None else None
             return {
+                "vest_status": {
+                    **self._vest_status, "age_sec": vest_age,
+                    "live": vest_age is not None and vest_age <= self._stale_timeout,
+                },
+                "remote_request": dict(self._remote_request),
                 **deepcopy(self._payload), "version": self._version,
                 "mode": "REMOTE" if self._remote_override else self._mode,
                 "remote_override": self._remote_override,

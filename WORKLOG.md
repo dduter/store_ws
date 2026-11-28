@@ -1149,3 +1149,28 @@
   - 라이브 ROS 2(`ROS_DOMAIN_ID=40`) `web_ui_node` 기동 → `/store/ui_snapshot` 발행 → `/api/state`·`web_ui_node` 하트비트 수신·`SIGINT` 정상 종료 확인
   - Codex 크로스모델 리뷰 `[P1]`/`[P2]` 4건 전건 반영 완료
 - **후속 조치**: 실기 `remote_node` / `orchestrator` / 카메라 노드와 함께 웹 브라우저에서 라이브 시연 확인.
+
+
+---
+
+## 2026-11-28 17:14 — `store_web_ui` 고객 키오스크 / 직원·관리자 관제 화면 분리, PTT·담배 원격 호출 및 형광조끼 자동 전환 연동
+
+- **목표 / 배경**: 사용자 요청에 따라 웹 UI를 **🛒 고객 키오스크**와 **🛠️ 직원·관리자 관제** 화면으로 분리하고, 음성 입력 PTT(`/store/voice/ptt_trigger`), 담배 구매 요청 원격 호출 알림, 그리고 형광조끼 YOLO 학습 전 시연용 조끼 시뮬레이션(`/store/vision/vest_detected` 5프레임 발행) + 학습 완료 시 자동 화면 전환 구조(`allow_vest_simulation` 스위치 포함)를 완성해 백업함.
+- **담당 에이전트**:
+  - **Codex (`codex exec -s workspace-write` & `codex exec -s read-only`)**: `state_store.py`/`server.py`/`web_ui_node.py` 백엔드 확장(`parse_vest_payload`, `vest_status`, `remote_request`, `/api/voice/ptt`, `/api/remote_request`, `/api/vest_simulate`), 고객/직원·관리자 화면 분리 UI, 단위 테스트 16건 추가(38 passed) 및 크로스모델 리뷰 수행.
+  - **Antigravity**: `voice_node.py`/`orchestrator.py` 토픽 계약 정합 확인, `web_ui_node.py`의 종료 인터럽트(`_shutdown.wait`) 적용 및 공백 `item` 정규화, Codex 리뷰 `[P1]`/`[P2]` 2건 해결(`allow_vest_simulation` ROS 파라미터 및 `403`/버튼 자동 숨김, 5초 미감지 대기 중 실시간 조끼 재감지 시 `409` 안전 중단), 회귀 테스트 추가(39 passed), 라이브 ROS 2 E2E 검증 및 Git 백업.
+- **시행착오 및 해결 내역**:
+  - `ModeFSM`은 직원 모드 진입에 연속 5프레임, 고객 모드 복귀에 5초 미감지 조건을 요구함 → `publish_vest_simulation()`이 5프레임 발행 및 복귀 시 5초 경과 대기(`_shutdown.wait`로 Ctrl+C 즉시 종료 보장)를 처리하도록 설계.
+  - Codex 리뷰 `[P1]`/`[P2]` 반영: ① 형광조끼 YOLO 학습 완료 후 실제 운영 시 미인증 시뮬레이션 엔드포인트를 차단할 수 있도록 `allow_vest_simulation` 파라미터(현재 기본 `true`, 실전 배포 시 `false`로 전환 시 `/api/vest_simulate` `403` 반환 및 버튼 자동 숨김) 추가, ② 5초 대기 중 실시간 조끼 감지가 다시 들어오면 `409`를 반환해 오탐 복귀 표시를 차단.
+- **세부 변경 내역**:
+  - `/home/yongsoo/store_ws/src/store_web_ui/store_web_ui/core/state_store.py`: `parse_vest_payload()`, `vest_status`, `remote_request` 상태 및 스냅샷 추가.
+  - `/home/yongsoo/store_ws/src/store_web_ui/store_web_ui/web_ui_node.py`: `/store/voice/ptt_trigger` 발행, `/store/vision/vest_detected` 구독/시뮬레이션 발행, `allow_vest_simulation` 파라미터, `_shutdown` 이벤트 기반 안전 대기 추가.
+  - `/home/yongsoo/store_ws/src/store_web_ui/store_web_ui/server.py`: `/api/voice/ptt`, `/api/remote_request`, `/api/vest_simulate` (`allow_vest_simulation` 가드 + `vest_simulation_lock`) 추가.
+  - `/home/yongsoo/store_ws/src/store_web_ui/store_web_ui/static/index.html`, `style.css`, `app.js`: 고객 키오스크(`PTT`, 큰 주문 카드, 담배 구매 원격 호출, 구매 가능 매대 목록, 진행 안내) vs 직원·관리자 관제(원격 요청 알림 배너, 형광조끼 상태/시뮬레이션, 카메라 2채널, 직원 명령/PTT/로그, 인증 원격 조작, 노드 헬스, 재고/폐기, SVG KG) 분리 및 `형광조끼 자동 화면 전환` 토글 구현.
+  - `/home/yongsoo/store_ws/src/store_web_ui/tests/test_web_ui.py`: 신규 기능 및 `allow_vest_simulation=False` `403` 차단 테스트 포함 총 39건 통과.
+- **검증 결과**:
+  - `colcon build --symlink-install --packages-select store_web_ui` 성공
+  - `pytest -q src/store_web_ui/tests` **39 passed**
+  - 라이브 ROS 2 `web_ui_node` 기동 후 `/api/voice/ptt`, `/api/remote_request`, `/api/vest_simulate` E2E 검증 완료
+  - Codex 크로스모델 리뷰 `[P1]`/`[P2]` 전건 반영 완료
+- **후속 조치**: 추후 비전 A의 `vest_yolov8n.pt` 학습 완료 시 `allow_vest_simulation:=false`로 기동하면 버튼이 자동 숨김되고 실시간 형광조끼 인식으로 자동 전환됨.
