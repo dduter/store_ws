@@ -1043,3 +1043,19 @@
   - `safe_transit_z_mm: 150.0`으로 `[520, -430]` 중앙 진입 성공했으나 `J3 ≈ 11°`(팔꿈치 특이점 근접)에서 `movel` 급가속 발생 → `safe_transit_z_mm: 125.0 mm`(`J3 ≈ 23°`, 포스틱 전용 `pick_transit_z_mm: 260.0` 무영향)으로 낮춰 급가속 완전 해소.
   - 쇼핑백 투하 높이 `100 → 40 → -40.0 mm` 조정에 맞춰 `z_min_zones`에 `checkout_bag_drop(X[-160,20], Y[-620,-335], z_min:-55.0)` 추가, 폐기통 투하 높이도 `40 → -10.0 mm`로 조정해 실기 모두 양호 확정.
 - **검증 결과**: 실기 테스트 1·2·3 전 구간 성공, `pytest` **273 passed**, `git diff --check` 통과.
+
+
+---
+
+## 2026-11-28 14:51 — 포스틱 앞쪽 박스(`입고상자 → flip_zone → 구매상품`) 실기 성공, 대칭 180° J6 자동 전환 및 실기 `ikin` 사전 검증 추가
+
+- **목표 / 배경**: 포스틱(`postick_front`)의 입고상자 반대쪽 꼭짓점 파지(`rz=180°` → `flip_zone`) 및 구매상품 쇼핑백 투하(`dest=[-140, -370, 50]`) 실기 검증을 완료하고, `J1` 대각선 횡단(`-Y → +Y`) 시 발생한 `J6_LIMIT_VIOLATION`을 근본 해결해 백업함.
+- **담당 에이전트**:
+  - **Antigravity**: 실기 `ikin` 분석, `executor_node.py`의 `predict_linear_j6` 기반 파지 전 `J6` 사전 검증 및 180° 대칭 2핑거 자동 각도 전환 구현, 회귀 테스트 추가, 빌드·검증·백업.
+  - **Codex (`codex exec review --uncommitted`)**: 크로스모델 코드 리뷰 수행.
+- **시행착오 및 해결 내역**:
+  - 포스틱을 입고상자 중앙 `[231, -486]`에서 `rz=0°`로 잡으면 `+75, -114` 오프셋이 바깥 `(306, -600)`(`r=673.5 mm`)으로 밀려 `Z=260 mm` 불가 → 반대쪽 꼭짓점 `rz=180°`로 전환해 안쪽 `(156, -372)`(`r=403 mm`)으로 당김.
+  - `[231, -486, -75, 180°]`는 뒤쪽 상자 벽(`Y=-341.3`)과 가까워 그리퍼가 벽에 쓸렸고, 데스크(`+Y`, `J1=+29°`) 이동 시 `+135°` 각도가 `J1` 회전분(`+98°`)을 합쳐 `J6=+164.7°`로 `+150°` 한계 초과.
+  - 실기 `predict_linear_j6`(`ikin`)로 파지 전 `J1` 포함 `J6`를 사전 검증하고, 대칭 2핑거(`pick_yaw_offset_deg != 0`, `|target_rz| > 90°`)에서 `±180°` 등가 각도(`-45°`, `J6: -112.9° → -16.6°`)를 자동 선택하도록 수정 + 입고상자 파지 위치를 안쪽 `[246, -516, -75, 180°]`(`TCP [171, -402]`, 벽 여유 `6.1 cm`)로 조정해 테스트 4(입고→데스크)·테스트 5(데스크→쇼핑백) 모두 1회 성공.
+  - Codex 리뷰 `[P1]` 2건 반영: ① 높이 보정(`place_z_offset_mm`, `transit_z`) 완료 후 실제 명령할 4개 경유점(`above_target, target, above_destination, destination`) 전체를 `predict_linear_j6`로 사전 검증하도록 순서 조정, ② `_move_linear()`도 실기에서 동일한 `predict_linear_j6` 기준을 사용하도록 통일.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **274 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]` 2건 전건 해결.

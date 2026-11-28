@@ -319,7 +319,10 @@ class ExecutorNode(Node):
         return current_j6, current_j6 + delta_rz
 
     def _move_linear(self, pose, vel=None, acc=None):
-        current_j6, predicted_j6 = self._predict_j6_after_linear(pose[3])
+        if not self._dry_run:
+            current_j6, predicted_j6 = self._robot.predict_linear_j6([*pose[:3], 0.0, 180.0, pose[3]])
+        else:
+            current_j6, predicted_j6 = self._predict_j6_after_linear(pose[3])
         if not (self._guard.check_j6_limit(current_j6) and self._guard.check_j6_limit(predicted_j6)):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
         self._robot.move_linear_4d(
@@ -795,10 +798,6 @@ class ExecutorNode(Node):
 
         target = apply_pick_offset(target, apply_depth=True)
         destination = apply_pick_offset(self._checked_pose(goal["dest_pose"]))
-        current_j6, target_j6 = self._predict_j6_after_linear(target[3])
-        dest_j6 = target_j6 + ((destination[3] - target[3] + 180.0) % 360.0 - 180.0)
-        if not all(self._guard.check_j6_limit(j6) for j6 in (current_j6, target_j6, dest_j6)):
-            raise TaskFailure("J6_LIMIT_VIOLATION", True)
         dest_base_z = destination[2]
         if grasp.place_z_offset_mm > 0.0:
             place_z = dest_base_z + grasp.place_z_offset_mm
@@ -814,6 +813,37 @@ class ExecutorNode(Node):
             if grasp.pick_transit_z_mm is not None:
                 raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 상품 이동 높이를 초과합니다.")
             transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
+
+        def predict_transfer_j6(t_pose, d_pose):
+            if not self._dry_run:
+                abv_t = [*t_pose[:2], transit_z, t_pose[3]]
+                abv_d = [*d_pose[:2], transit_z, d_pose[3]]
+                cur_j6, abv_t_j6 = self._robot.predict_linear_j6([*abv_t[:3], 0.0, 180.0, abv_t[3]])
+                _, t_j6 = self._robot.predict_linear_j6([*t_pose[:3], 0.0, 180.0, t_pose[3]])
+                _, abv_d_j6 = self._robot.predict_linear_j6([*abv_d[:3], 0.0, 180.0, abv_d[3]])
+                _, d_j6 = self._robot.predict_linear_j6([*d_pose[:3], 0.0, 180.0, d_pose[3]])
+                return cur_j6, abv_t_j6, t_j6, abv_d_j6, d_j6
+            cur_j6, t_j6 = self._predict_j6_after_linear(t_pose[3])
+            d_j6 = t_j6 + ((d_pose[3] - t_pose[3] + 180.0) % 360.0 - 180.0)
+            return cur_j6, t_j6, d_j6
+
+        def wrap_rz(angle):
+            return (angle + 180.0) % 360.0 - 180.0
+
+        j6_values = predict_transfer_j6(target, destination)
+        if not all(self._guard.check_j6_limit(j6) for j6 in j6_values):
+            # 대칭 2핑거 그리퍼가 180° 반대 꼭짓점(|rz|>90°)으로 잡을 때 J6 한계 초과 시 ±180° 등가 각도를 시도합니다.
+            if grasp.pick_yaw_offset_deg != 0.0 and abs(target[3]) > 90.0:
+                for shift in (-180.0, 180.0):
+                    alt_t = [*target[:3], wrap_rz(target[3] + shift)]
+                    alt_d = [*destination[:3], wrap_rz(destination[3] + shift)]
+                    alt_j6 = predict_transfer_j6(alt_t, alt_d)
+                    if all(self._guard.check_j6_limit(j6) for j6 in alt_j6):
+                        target, destination, j6_values = alt_t, alt_d, alt_j6
+                        break
+        if not all(self._guard.check_j6_limit(j6) for j6 in j6_values):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+
         transfer_force = (
             grasp.pick_grasp_force_n if grasp.pick_grasp_force_n is not None else grasp.grasp_force_n
         )

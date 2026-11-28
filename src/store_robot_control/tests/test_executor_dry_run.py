@@ -412,6 +412,32 @@ def test_pepero_uses_separate_pick_force_for_transfer_and_reorient(node, monkeyp
     assert forces == [10.0, 3.0, 18.0]
 
 
+def test_postick_symmetric_180_yaw_fallback_avoids_j6_limit(node, monkeypatch):
+    # 실기에서 J1 회전으로 +135° 목적지가 J6 +163°를 초과하면 -45° 등가 각도로 자동 전환하고,
+    # 실제 접근·이송(260 mm)·투하(135 mm) 자세를 동일한 predict_linear_j6 기준으로 검증합니다.
+    monkeypatch.setattr(node, "_dry_run", False)
+    checked_z = []
+
+    def fake_predict(pose):
+        checked_z.append(pose[2])
+        return (0.0, 163.4 if pose[5] > 90.0 else -16.6)
+
+    monkeypatch.setattr(node._robot, "predict_linear_j6", fake_predict)
+    poses = []
+    orig_move = node._robot.move_linear_4d
+    monkeypatch.setattr(
+        node._robot, "move_linear_4d", lambda p, *a, **k: (poses.append(list(p)), orig_move(p, *a, **k))[1],
+    )
+    result = run_goal(node, GoalHandle(
+        "pick_place", target=[350.0, 20.0, 40.0, 180.0],
+        destination=[420.0, 20.0, 40.0, 180.0], category="postick_front",
+    ))
+    assert result.success
+    assert all(pose[3] == pytest.approx(-45.0) for pose in poses)
+    assert 260.0 in checked_z and 135.0 in checked_z
+    assert 40.0 not in checked_z
+
+
 def test_health_reports_emergency_and_dry_run(node, monkeypatch):
     messages = []
     monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))
