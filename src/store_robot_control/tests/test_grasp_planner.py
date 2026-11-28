@@ -170,3 +170,10 @@ def test_invalid_transfer_offset(planner, monkeypatch, field, value):
 def test_zero_vertical_back_tilt_is_allowed(planner, monkeypatch):
     monkeypatch.setitem(planner.products["postick"], "vertical_back_tilt_deg", 0.0)
     assert planner.plan_grasp("postick_front").vertical_back_tilt_deg == 0.0
+
+
+def test_product_back_safe_fallback(planner):
+    plan = planner.plan_grasp("product_back")
+    assert (plan.open_width_mm, plan.grasp_width_mm, plan.grasp_force_n) == (108.0, 84.0, 3.0)
+    assert plan.reorient_mode == "back_tilt_vertical_flip"
+    assert plan.vertical_edge_offset_mm == 65.0

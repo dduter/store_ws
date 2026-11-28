@@ -276,11 +276,22 @@ class RemoteNode(Node):
                     raise ValueError("XY 이동량의 크기가 너무 큽니다.")
                 if "gripper_closed" in command and type(command["gripper_closed"]) is not bool:
                     raise ValueError("그리퍼 상태는 불리언이어야 합니다.")
+                if "stop" in command and type(command["stop"]) is not bool:
+                    raise ValueError("정지 플래그는 불리언이어야 합니다.")
             except (ValueError, KeyError, OverflowError, RecursionError) as exc:
                 self.get_logger().warn(f"잘못된 원격 입력을 무시했습니다 ({exc})", throttle_duration_sec=2.0)
                 return
             now = monotonic()
             self._expire_input(now)
+            if command.get("stop"):
+                self._pipeline.ema.reset()
+                self._deltas = (0.0, 0.0, 0.0)
+                if self._moving:
+                    self.quick_stop()
+                if "gripper_closed" in command:
+                    self._pipeline.gripper.update(command["gripper_closed"], now)
+                self._pipeline.watchdog.feed(now)
+                return
             dx, dy, dz = deltas
             # XY와 Z의 데드존을 따로 적용하고 세 축을 같은 EMA로 평활화합니다.
             xy = self._pipeline.deadzone.apply(dx, dy)

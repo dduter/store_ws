@@ -54,9 +54,9 @@ def _save_workspace(path, workspace):
     print(f"저장 완료 ({path})")
 
 
-def _update_workspace(choice, workspace, pose, joints):
-    poses = workspace["poses"]
+def _update_workspace(choice, workspace, pose, joints, read_pose=None):
     if choice in {"1", "2"}:
+        poses = workspace["poses"]
         name = "home" if choice == "1" else "scan_pose"
         poses[f"{name}_joint_deg"] = joints
         poses[f"{name}_cartesian"] = pose
@@ -69,30 +69,70 @@ def _update_workspace(choice, workspace, pose, joints):
         if input(f"z_min_mm을 {limit:.3f} mm로 저장하시겠습니까? [y/N]> ").strip().lower() != "y":
             return False
         safety["z_min_mm"] = limit
-    elif choice == "4":
+    elif choice in {"4", "5", "6"}:
         effective_rz = top_down_effective_rz(pose)
         if effective_rz is None:
             raise ValueError(f"4D 좌표 저장은 하향 자세(ry≈180°)에서만 가능합니다 (현재 ry={pose[4]:.2f}°).")
-        pose_4d = [*pose[:3], effective_rz]
-        slots = workspace["zones"].setdefault("buffer_slots", [])
-        entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
-        if not entry:
-            slots.append(pose_4d)
+        pose_4d = [*map(float, pose[:3]), effective_rz]
+        zones = workspace["zones"]
+        if choice == "5":
+            zones["flip_zone"] = pose_4d
         else:
-            index = int(entry) - 1
-            if not 0 <= index < len(slots):
-                raise ValueError("기존 버퍼 슬롯 번호를 입력하세요.")
-            slots[index] = pose_4d
+            if choice == "6":
+                tier = input("진열대 단 번호 (1~3)> ").strip()
+                if tier not in {"1", "2", "3"}:
+                    raise ValueError("진열대 단 번호는 1~3이어야 합니다.")
+                slots = zones.setdefault("display_tiers", {}).setdefault(f"tier_{tier}", [])
+                if len(slots) >= 3:
+                    entry = input(f"교체할 슬롯 번호 (1~{len(slots)})> ").strip()
+                    if not entry:
+                        raise ValueError("진열대 단은 최대 3슬롯입니다. 교체할 슬롯 번호를 입력하세요.")
+                else:
+                    entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
+            else:
+                slots = zones.setdefault("buffer_slots", [])
+                entry = input(f"교체할 슬롯 번호 (1~{len(slots)}, Enter는 추가)> ").strip()
+            if not entry:
+                slots.append(pose_4d)
+            else:
+                index = int(entry) - 1
+                if not 0 <= index < len(slots):
+                    raise ValueError("기존 슬롯 번호를 입력하세요.")
+                slots[index] = pose_4d
+    elif choice == "7":
+        zone_name = input("저장할 구역 (inbound_box 또는 display_area)> ").strip().lower()
+        if zone_name not in {"inbound_box", "display_area"}:
+            raise ValueError("inbound_box 또는 display_area를 입력하세요.")
+        if read_pose is None:
+            raise ValueError("두 번째 모서리 좌표를 읽을 수 없습니다.")
+        if pose is None:
+            print("첫 번째 모서리의 현재 좌표를 읽습니다.")
+            pose = read_pose()
+        input("반대편 대각선 모서리로 이동한 뒤 Enter를 누르세요> ")
+        second_pose = read_pose()
+        zone = workspace["zones"].setdefault(zone_name, {})
+        zone["x_range"] = sorted((float(pose[0]), float(second_pose[0])))
+        zone["y_range"] = sorted((float(pose[1]), float(second_pose[1])))
     return True
 
 
 def _teach(api, path):
+    def read_pose():
+        if api.get_robot_mode() != 0:
+            raise ValueError("직접 교시 모드 (robot_mode=0)에서 모서리 좌표를 읽으세요.")
+        pose, _ = _read_coordinates(api)
+        return pose
+
     while True:
-        print("\n1. home  2. scan_pose  3. z_min_mm  4. 버퍼 슬롯  q. 종료")
+        print(
+            "\n1. home  2. scan_pose  3. z_min_mm  4. 버퍼 슬롯"
+            "\n5. 뒤집기 구역 (flip_zone)  6. 진열대 슬롯 (display_tiers)"
+            "\n7. 구역 범위 (inbound_box / display_area)  q. 종료"
+        )
         choice = input("저장할 항목> ").strip().lower()
         if choice == "q":
             return
-        if choice not in {"1", "2", "3", "4"}:
+        if choice not in {"1", "2", "3", "4", "5", "6", "7"}:
             print("메뉴에 있는 항목을 선택하세요.")
             continue
         try:
@@ -100,8 +140,8 @@ def _teach(api, path):
                 print("직접 교시 모드 (robot_mode=0)에서 저장하세요.")
                 continue
             workspace = load_settings(path)
-            pose, joints = _read_coordinates(api)
-            if _update_workspace(choice, workspace, pose, joints):
+            pose, joints = (None, None) if choice == "7" else _read_coordinates(api)
+            if _update_workspace(choice, workspace, pose, joints, read_pose):
                 _save_workspace(path, workspace)
         except ValueError as exc:
             print(f"입력을 확인하세요 ({exc})")

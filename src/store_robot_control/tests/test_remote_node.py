@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from math import hypot
 from types import SimpleNamespace
 
@@ -9,7 +10,7 @@ from std_msgs.msg import Bool, String
 from store_interfaces.srv import VerifyRemoteKey
 
 from conftest import make_test_config_dir
-from store_robot_control.nodes import remote_node
+from store_robot_control.nodes import hand_client, remote_node
 from store_robot_control.nodes.hand_client import (
     keyboard_key_to_command, landmarks_to_hand_command, serialize_hand_command,
 )
@@ -219,3 +220,117 @@ def test_handover_waits_for_executor_idle_and_watchdog_stops_inflight_motion(rig
     node._watchdog_tick()
     assert stops == ["stop", "stop"]
     assert [m.data for m in messages] == [True, False]
+
+
+@pytest.mark.parametrize("stop_key", [" ", "x"])
+def test_keyboard_command_hold_and_stop(stop_key):
+    holder = hand_client.KeyboardCommandHolder(hold_sec=0.25)
+    neutral = {"dx_px": 0.0, "dy_px": 0.0, "dz_px": 0.0, "gripper_closed": False}
+    holder.press("r", 1.0, 30.0)
+    assert holder.current_command(1.24) == {**neutral, "dz_px": 30.0}
+    assert holder.current_command(1.25) == neutral
+
+    holder.press("w", 2.0)
+    holder.press(stop_key, 2.1)
+    assert holder.current_command(2.1) == {**neutral, "stop": True}
+    assert holder.current_command(2.15) == neutral
+
+    # hold_sec=0에서도 이동 키 입력은 단발 1회 발행되어야 합니다.
+    single = hand_client.KeyboardCommandHolder(hold_sec=0.0)
+    single.press("a", 3.0, 40.0)
+    assert single.current_command(3.0) == {**neutral, "dx_px": -40.0}
+    assert single.current_command(3.01) == neutral
+
+
+def test_keyboard_batch_prioritizes_stop_and_remote_node_clears_ema(rig):
+    node, _, _ = rig
+    holder = hand_client.KeyboardCommandHolder(hold_sec=0.25)
+    holder.press("w", 1.0, 40.0)
+    assert not hand_client._apply_key_batch(holder, [" ", "w", "w"], 1.05, 40.0)
+    stop_cmd = holder.current_command(1.05)
+    assert stop_cmd["stop"] is True and stop_cmd["dy_px"] == 0.0
+
+    stops = []
+    node.quick_stop = lambda: stops.append("stop")
+    assert verify(node).granted
+    send(node, dx=100)
+    assert node._deltas[0] > 0.0
+    node._moving = True
+    node._on_hand_cmd(String(data=hand_client.serialize_hand_command(**stop_cmd)))
+    assert node._deltas == (0.0, 0.0, 0.0)
+    assert stops == ["stop"]
+    node._moving = False
+    start = node._robot.get_current_pose_6d()
+    node._control_tick()
+    assert node._robot.get_current_pose_6d() == start
+
+
+def test_keyboard_gripper_toggle_preserves_hold_deadline():
+    holder = hand_client.KeyboardCommandHolder()
+    holder.press("g", 0.0)
+    assert holder.current_command(0.0) == {
+        "dx_px": 0.0, "dy_px": 0.0, "dz_px": 0.0, "gripper_closed": True,
+    }
+
+    holder.press("d", 1.0)
+    holder.press("g", 1.1)
+    assert holder.current_command(1.1) == {
+        "dx_px": 0.0, "dy_px": 0.0, "dz_px": 0.0, "gripper_closed": False,
+    }
+    assert holder.current_command(1.2) == {
+        "dx_px": 40.0, "dy_px": 0.0, "dz_px": 0.0, "gripper_closed": False,
+    }
+    assert holder.current_command(1.25)["dx_px"] == 0.0
+
+
+@pytest.mark.parametrize(("display", "no_preview", "quit_key"), [
+    (":1", False, ord("q")),
+    (":1", False, ord("Q")),
+    (":1", False, 27),
+    (None, False, None),
+    (":1", True, None),
+])
+def test_webcam_preview_and_headless(monkeypatch, display, no_preview, quit_key):
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    if display is None:
+        monkeypatch.delenv("DISPLAY", raising=False)
+    else:
+        monkeypatch.setenv("DISPLAY", display)
+    monkeypatch.setattr(hand_client, "sleep", lambda _: None)
+    frame = SimpleNamespace(shape=(100, 200, 3))
+    calls = []
+    cv2 = SimpleNamespace(
+        flip=lambda frame, _: frame,
+        cvtColor=lambda frame, _: frame,
+        COLOR_BGR2RGB=1,
+    )
+    landmarks = [SimpleNamespace(x=0.6, y=0.4)] * 21
+    result = SimpleNamespace(multi_hand_landmarks=[SimpleNamespace(landmark=landmarks)])
+    if quit_key is not None:
+        cv2.line = lambda *args: None
+        cv2.circle = lambda *args: calls.append(("circle", args[2]))
+        cv2.arrowedLine = lambda *args: calls.append("arrow")
+        cv2.putText = lambda *args: calls.append(("text", args[1]))
+        cv2.FONT_HERSHEY_SIMPLEX = 0
+        cv2.imshow = lambda name, image: calls.append((name, image))
+        cv2.waitKey = lambda delay: calls.append(("wait", delay)) or quit_key
+        cv2.destroyAllWindows = lambda: calls.append("destroy")
+    detector = SimpleNamespace(process=lambda _: result)
+    hands = SimpleNamespace(Hands=lambda **_: nullcontext(detector))
+    camera = SimpleNamespace(read=lambda: (True, frame))
+    published = []
+    running = iter([True, False]) if quit_key is None else iter([True])
+
+    hand_client._run_webcam(
+        (cv2, hands, camera), published.append, lambda: next(running), 15.0, no_preview,
+    )
+
+    if quit_key is None:
+        assert calls == []
+        assert len(published) == 1
+    else:
+        assert ("circle", 15) in calls
+        assert "arrow" in calls
+        assert ("text", "Q/ESC: quit") in calls
+        assert calls[-3:] == [("Store Remote Hand Control", frame), ("wait", 1), "destroy"]
+        assert published == []

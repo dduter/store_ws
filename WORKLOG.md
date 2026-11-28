@@ -983,3 +983,18 @@
   - 투하 시 `dest_z=15 mm`까지 내려오면 매달린 봉지를 바닥에 눌러 터질 위험 → `place_z_offset_mm: 95.0`(`Z≈110 mm`에서 부드럽게 놓기) 추가로 실기 정상 완료 확인.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **232 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.
 - **후속 조치**: 비전 확정 치수(`빼빼로 88×162`, `포스틱 180×235`, `병음료 63×208`) 기준 검토 및 `병음료(drink_front)` 파지·뒤집기 실기 설계/검증 진행.
+
+
+---
+
+## 2026-11-28 12:04 — `product_back` 안전 폴백, `teach_zones` 현장 교시 확장, `hand_client` 원격 조작 개선 및 백업
+
+- **목표 / 배경**: 병음료 튜닝을 후순위로 미루고, LLM 연동 요청(`product_back` 미상 품목 안전 폴백), 현장 최종 좌표 티칭 준비(`teach_zones`의 `flip_zone`/`display_tiers`/`inbound_box`/`display_area` 지원), 원격 조작(`hand_client`의 15 Hz 중립 프레임 키보드 희석 수정 + 웹캠 OpenCV 미리보기)을 일괄 완료해 백업함.
+- **담당 에이전트**:
+  - **Antigravity**: `config/products_catalog.yaml`에 보수적 `product_back` 안전 폴백(`108/84 mm, 3.0 N, back_tilt_vertical_flip, edge 65 mm`) 추가 및 포스틱 주석 치수(`180×235 mm`) 반영, Codex 리뷰 `[P1]`/`[P2]` 4건 직접 수정(`stop` 플래그 기반 `remote_node` EMA 즉시 초기화 및 `quick_stop`, 키 배치 정지 우선 처리, `--hold-sec 0` 단발 발행, `display_tiers` 단별 최대 3슬롯 제한) 및 회귀 테스트 추가, 빌드·검증·커밋/푸시.
+  - **Codex (`codex exec -s workspace-write` & `codex exec review --uncommitted`)**: `teach_zones.py` 메뉴 `5/6/7` 구현, `hand_client.py`의 `KeyboardCommandHolder` 및 OpenCV 미리보기 구현, `test_teach_zones.py`/`test_remote_node.py`/`test_grasp_planner.py` 단위 테스트 19건 작성 및 크로스모델 리뷰 수행.
+- **시행착오 및 해결 내역**:
+  - 기존 `hand_client.py`는 키보드 모드에서 15 Hz 주기로 즉시 중립 프레임(`0, 0`)을 보내 `remote_node`의 EMA(`alpha=0.3`)와 `10 Hz` 제어 주기가 겹치며 이동 명령이 희석됨 → `KeyboardCommandHolder(hold_sec=0.25)`로 이동 명령을 유지하고, Codex 리뷰 지적에 따라 `Space`/`X` 정지 시에는 명시적 `stop: true`를 전송해 `remote_node`가 EMA를 즉시 리셋하고 진행 중인 이동에 `quick_stop()`을 호출하도록 보완.
+  - 기존 `teach_zones.py`는 `home`/`scan_pose`/`z_min_mm`/`buffer_slots`만 지원해 현장 티칭 시 수동 YAML 편집이 필요했음 → `flip_zone`, `display_tiers`(단별 최대 3슬롯 검증 포함), `inbound_box`/`display_area`(대각선 2점 자동 정렬) 메뉴 추가로 전체 구역 티칭 자동화.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **253 passed**, `git diff --check` 통과, Codex 리뷰 지적 전건 반영.
+- **후속 조치**: 실기에서 `teach_zones`로 최종 현장 좌표 티칭(`zones.flip_zone` 포함) → 비전·로봇 합동 `pick_place` 확인 → `hand_client` 저속 실기 테스트 → 병음료 튜닝.
