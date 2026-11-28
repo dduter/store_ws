@@ -814,6 +814,11 @@ class ExecutorNode(Node):
             if grasp.pick_transit_z_mm is not None:
                 raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 상품 이동 높이를 초과합니다.")
             transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
+        transfer_force = (
+            grasp.pick_grasp_force_n if grasp.pick_grasp_force_n is not None else grasp.grasp_force_n
+        )
+        open_args = (grasp.open_width_mm, transfer_force)
+        move_args = (grasp.grasp_width_mm, transfer_force)
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])
         above_destination = self._checked_pose([*destination[:2], transit_z, destination[3]])
         steps = [

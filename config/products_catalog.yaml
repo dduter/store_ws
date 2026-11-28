@@ -64,7 +64,7 @@ categories:
 #     open_width_mm: 100.0
 #     grasp_force_n: 18.0
 products:
-  # 실측: 88 x 162 mm (실물 180° 반전 성공 확정값: 3.0N / 84.0mm 중력 힌지)
+  # 실측: 88 x 162 mm (실물 180° 반전 확정값: 3.0N / 84.0mm 중력 힌지, 일반 이송 pick_place: 10.0N)
   pepero_almond:
     category: "paper_box"
     reorient_mode: "back_tilt_vertical_flip"
@@ -72,6 +72,7 @@ products:
     open_width_mm: 108.0
     grasp_width_mm: 84.0
     grasp_force_n: 3.0
+    pick_grasp_force_n: 10.0
     grasp_depth_offset_mm: 15.0
   # 실측: 가로 180 mm(±X) x 세로 235 mm(±Y) (실물 180° 반전 확정값: 45° 수평 두 손가락 + 50° 팔 기울기 파지 -> Z=290 들기 -> J4(-36.6°, ry=-120°) +Y 넘기기)
   postick:

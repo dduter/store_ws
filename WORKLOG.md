@@ -1015,3 +1015,18 @@
   - Codex 리뷰 `[P2]` 반영: `executor_node.py`/`mock_robot.py`가 `apply_pick_offset()`으로 최종 파지 XY를 계산한 뒤 해당 XY의 `z_min_at(px, py)`로 깊이 오프셋을 제한하도록 수정.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **270 passed**, `git diff --check` 통과, `core/` 순수 Python 유지 확인, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.
 - **후속 조치**: 실기에서 `입고상자 → flip_zone / 구매상품 / 폐기통` 빼빼로·포스틱 `pick_place` 테스트 → 진열대 도착 후 데스크 위 `display_tiers` 티칭 및 LLM 최종 구역 키 확정.
+
+
+---
+
+## 2026-11-28 14:13 — 빼빼로 `pick_place` 전용 파지력(`pick_grasp_force_n: 10.0`) 분리 및 입고상자 바닥 하한(`-135.0 mm`) 보정
+
+- **목표 / 배경**: 입고상자 중앙 빼빼로 실기 테스트 결과 ① 그리퍼 열림(`84 mm`) 기준 실제 파지 높이가 `-130.0 mm`로 확인되어 `front_lower_boxes.z_min_mm`을 `-115.0 → -135.0 mm`로 보정하고, ② 기존 `grasp_force_n: 3.0 N`은 `reorient` 중력 힌지 반전용이라 `pick_place` 중 상자가 중력으로 돌아가는 현상이 발생함에 따라 `pick_grasp_force_n: 10.0 N`(실기 확인 완료)을 분리 추가함 (`reorient`는 `3.0 N` 그대로 유지, 포스틱은 `18.0 N` 동일 유지).
+- **담당 에이전트**:
+  - **Antigravity**: `config/workspace_zones.yaml`, `config/products_catalog.yaml`, `grasp_planner.py`, `executor_node.py`, 단위 테스트 수정 및 빌드·검증·백업.
+  - **Codex (`codex exec review --uncommitted`)**: 크로스모델 코드 리뷰 수행.
+- **시행착오 및 해결 내역**:
+  - 입고상자 바닥 측정값 `-90.6 mm`는 닫힌 그리퍼(`0 mm`) + `15°` 기울기 기준이라 열림(`84 mm`) 수직 파지 시 `-95 / -107 / -114 mm`에서 살짝 높아 `GRASP_FAIL` 안전 정지 → `front_lower_boxes.z_min_mm: -135.0` 확장 후 `Z = -130.0 mm`에서 파지 성공.
+  - `3.0 N`으로 `pick_place` 시 중력으로 빼빼로가 회전 → `grasp_force_n: 10.0` 실기 검증 후 `pick_grasp_force_n: 10.0` 옵션 분리 적용(`reorient` 3.0 N 100% 보존).
+  - Codex 리뷰 `[P1]` 반영: `-135.0 mm` 완화 범위를 전체 하단 구역(`front_lower_boxes`)에서 실제 파지가 필요한 입고상자 내부(`inbound_box_pick`, `X[30, 430], Y[-640, -335]`)로만 좁혀 투하 전용 구역(구매상품·폐기통)의 불필요한 과하강을 차단.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **273 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]` 해결.

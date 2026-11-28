@@ -400,6 +400,18 @@ def test_postick_front_rejects_dest_j6_and_preserves_transit_z_before_grasp(node
     assert not gripped
 
 
+def test_pepero_uses_separate_pick_force_for_transfer_and_reorient(node, monkeypatch):
+    forces = []
+    orig_grip = node._gripper.move_mm
+    monkeypatch.setattr(
+        node._gripper, "move_mm", lambda w, f: (forces.append(f), orig_grip(w, f))[1],
+    )
+    assert run_goal(node, GoalHandle("pick_place", category="pepero_almond_front")).success
+    assert run_goal(node, GoalHandle("reorient", category="pepero_almond_front")).success
+    assert run_goal(node, GoalHandle("pick_place", category="postick_front")).success
+    assert forces == [10.0, 3.0, 18.0]
+
+
 def test_health_reports_emergency_and_dry_run(node, monkeypatch):
     messages = []
     monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))

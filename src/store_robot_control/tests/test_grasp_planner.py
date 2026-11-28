@@ -98,7 +98,9 @@ def test_measured_product_overrides(planner):
         pepero.pick_yaw_offset_deg,
         pepero.pick_transit_z_mm,
         pepero.place_z_offset_mm,
-    ) == (0.0, 0.0, 0.0, None, 0.0)
+        pepero.pick_grasp_force_n,
+    ) == (0.0, 0.0, 0.0, None, 0.0, 10.0)
+    assert planner.plan_grasp("pepero_almond_front", force_override_n=14.0).pick_grasp_force_n is None
 
     postick = planner.plan_grasp("postick")
     assert postick.category == "postick"
@@ -160,6 +162,8 @@ def test_invalid_vertical_flip_setting(planner, monkeypatch, field, value):
     ("place_z_offset_mm", -1.0),
     ("pick_transit_z_mm", 0.0),
     ("pick_transit_z_mm", -1.0),
+    ("pick_grasp_force_n", 0.0),
+    ("pick_grasp_force_n", -3.0),
 ])
 def test_invalid_transfer_offset(planner, monkeypatch, field, value):
     monkeypatch.setitem(planner.products["postick"], field, value)

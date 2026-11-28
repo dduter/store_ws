@@ -34,6 +34,7 @@ class GraspPlan:
     pick_yaw_offset_deg: float = 0.0
     pick_transit_z_mm: float | None = None
     place_z_offset_mm: float = 0.0
+    pick_grasp_force_n: float | None = None
 
 
 class GraspPlanner:
@@ -143,6 +144,11 @@ class GraspPlanner:
         fwd_tilt = optional_pos("vertical_fwd_tilt_deg")
         sweep_mm = optional_pos("vertical_sweep_mm")
         pick_transit_z = optional_pos("pick_transit_z_mm")
+        pick_force = optional_pos("pick_grasp_force_n")
+        if force_override_n:
+            pick_force = None
+        elif pick_force is not None:
+            pick_force = max(limits["min_force_n"], min(limits["max_force_n"], pick_force))
 
         def finite_float(key, default=0.0):
             val = settings.get(key, default)
@@ -184,4 +190,5 @@ class GraspPlanner:
             pick_yaw_offset_deg=pick_yaw,
             pick_transit_z_mm=pick_transit_z,
             place_z_offset_mm=place_z_off,
+            pick_grasp_force_n=pick_force,
         )
