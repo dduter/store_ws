@@ -46,6 +46,13 @@ categories:
     grasp_force_n: 15.0
     grasp_depth_offset_mm: 12.0
     reorient_mode: "flip_180_in_place"
+  drink_bottle:
+    display_name: "음료병"
+    grasp_width_mm: 20.0
+    open_width_mm: 90.0
+    grasp_force_n: 18.0
+    grasp_depth_offset_mm: 15.0
+    reorient_mode: "flip_180_in_place"
   # Special non-retail task categories
   expired_box:
     display_name: "폐기 박스 (직원 전달용)"
@@ -54,7 +61,7 @@ categories:
     grasp_force_n: 30.0
     grasp_depth_offset_mm: 20.0
     reorient_mode: "none"
-  cigarette_mock:
+  ciga:
     display_name: "모형 담배 (후순위 원격)"
     grasp_width_mm: 15.0
     open_width_mm: 80.0
@@ -62,12 +69,40 @@ categories:
     grasp_depth_offset_mm: 15.0
     reorient_mode: "none"
 
-# Optional per-product overrides (keyed by yolo_class after products are finalized).
-# Example:
-# products:
-#   choco_pie:
-#     category: "paper_box"
-#     grasp_width_mm: 25.0
-#     open_width_mm: 100.0
-#     grasp_force_n: 18.0
-products: {}
+# Finalized per-product overrides (keyed by yolo_class; common backside: product_back).
+products:
+  postick_front:
+    display_name: "포스틱"
+    brand: "농심"
+    category: "snack_bag"
+    color: "노랑"
+    flavor: "짭짤한맛(감자)"
+    sweetness_rank: 3
+    width_mm: 180.0
+    height_mm: 235.0
+    yolo_class: "postick_front"
+  pepero_almond_front:
+    display_name: "빼빼로 아몬드"
+    brand: "롯데"
+    category: "paper_box"
+    color: "초록"
+    flavor: "초코맛(달달)"
+    sweetness_rank: 1
+    width_mm: 88.0
+    height_mm: 162.0
+    yolo_class: "pepero_almond_front"
+  drink_front:
+    display_name: "토마토주스"
+    brand: ""
+    category: "drink_bottle"
+    color: "빨강"
+    flavor: "토마토맛"
+    sweetness_rank: 2
+    width_mm: 63.0
+    depth_mm: 63.0
+    height_mm: 208.0
+    yolo_class: "drink_front"
+  ciga:
+    display_name: "담배"
+    category: "ciga"
+    yolo_class: "ciga"

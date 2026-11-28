@@ -42,8 +42,9 @@ ros2 run store_robot_control teach_zones
 - **좌표 단위**: 모든 3D/4D 좌표는 **`mm` + `deg`** (Robot Base Frame)
 - **버퍼 키**: `config/workspace_zones.yaml` → `zones.buffer_slots`
 - **`ExecuteRobotTask.product_category`**:
-  - 상품 카테고리 3종: `paper_box` (종이상자), `snack_bag` (봉지과자), `candy_chocolate` (캔디·초콜릿류)
-  - 특수 작업용: `expired_box`, `cigarette_mock`
+  - 상품 카테고리: `paper_box` (종이상자), `snack_bag` (봉지과자), `drink_bottle` (음료병), `candy_chocolate` (캔디·초콜릿류)
+  - 특수 작업용: `expired_box`, `ciga`
+  - 최종 YOLO 클래스: `postick_front`, `pepero_almond_front`, `drink_front`, `product_back` (+ 후순위 `ciga`)
   - `grasp_width_mm` / `grasp_force_n`은 `0.0` 전달 시 로봇 파트가 자동 계산
 - **토픽 / 서비스 / 액션**:
   - Action: `/store/execute_robot_task` (`store_interfaces/action/ExecuteRobotTask`)
