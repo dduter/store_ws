@@ -95,6 +95,11 @@ products:
     grasp_width_mm: 0.0
     grasp_force_n: 18.0
     grasp_depth_offset_mm: 15.0
+    pick_offset_x_mm: 75.0
+    pick_offset_y_mm: -114.0
+    pick_yaw_offset_deg: -45.0
+    pick_transit_z_mm: 260.0
+    place_z_offset_mm: 95.0
   # 알로에농장 등 원통 음료 (변경 가능, 실측 후 지름/힘 보정 예정)
   drink:
     category: "paper_box"

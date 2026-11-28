@@ -92,6 +92,13 @@ def test_measured_product_overrides(planner):
     assert (pepero.open_width_mm, pepero.grasp_width_mm, pepero.grasp_force_n) == (108.0, 84.0, 3.0)
     assert pepero.reorient_mode == "back_tilt_vertical_flip"
     assert pepero.vertical_edge_offset_mm == 65.0
+    assert (
+        pepero.pick_offset_x_mm,
+        pepero.pick_offset_y_mm,
+        pepero.pick_yaw_offset_deg,
+        pepero.pick_transit_z_mm,
+        pepero.place_z_offset_mm,
+    ) == (0.0, 0.0, 0.0, None, 0.0)
 
     postick = planner.plan_grasp("postick")
     assert postick.category == "postick"
@@ -109,6 +116,13 @@ def test_measured_product_overrides(planner):
     assert postick.vertical_lift_delta_mm == 110.0
     assert postick.vertical_mid_z_delta_mm == 275.0
     assert postick.vertical_release_z_delta_mm == 125.0
+    assert (
+        postick.pick_offset_x_mm,
+        postick.pick_offset_y_mm,
+        postick.pick_yaw_offset_deg,
+        postick.pick_transit_z_mm,
+        postick.place_z_offset_mm,
+    ) == (75.0, -114.0, -45.0, 260.0, 95.0)
 
     # 확정 YOLO 클래스명 별칭 호환 확인
     assert planner.plan_grasp("pepero_almond_front") == pepero
@@ -136,6 +150,18 @@ def test_invalid_vertical_edge_offset(planner, monkeypatch, offset):
     ("vertical_back_tilt_deg", -1.0),
 ])
 def test_invalid_vertical_flip_setting(planner, monkeypatch, field, value):
+    monkeypatch.setitem(planner.products["postick"], field, value)
+    with pytest.raises(ValueError, match=field):
+        planner.plan_grasp("postick_front")
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("pick_yaw_offset_deg", 125.0),
+    ("place_z_offset_mm", -1.0),
+    ("pick_transit_z_mm", 0.0),
+    ("pick_transit_z_mm", -1.0),
+])
+def test_invalid_transfer_offset(planner, monkeypatch, field, value):
     monkeypatch.setitem(planner.products["postick"], field, value)
     with pytest.raises(ValueError, match=field):
         planner.plan_grasp("postick_front")

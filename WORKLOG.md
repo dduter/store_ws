@@ -945,3 +945,41 @@
   - RG2 4절 링크가 `70 → 0 mm`로 완전히 닫힐 때 손가락 끝이 아래로 `~20~25 mm` 뻗어 `Z=-12/-5/-3 mm`에서 바닥에 닿음 → `Z=+15.0 mm` 안전 높이 확보 후 팔 각도만 `50°` 눕혀(`[-45, -130, -90]`, `Z_app=125 mm` IK 검증) + `J4=-36.6°(ry=-120°)` `+Y` 넘기기로 안정적 180° 반전 확정.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **226 passed**, `git diff --check` 통과.
 - **후속 조치**: 포스틱 일반 이동(`pick_place`) 확인 → 음료(`drink_front`) 실측·테스트 → `product_back` 안전 폴백 및 `zones.flip_zone` 실측 반영.
+
+---
+
+## 2026-11-28 11:36 — 포스틱 수직 45° 꼭짓점 `pick_place` 오프셋(`pick_offset_x/y`, `pick_yaw_offset_deg`, `pick_transit_z_mm`) 추가
+
+- **목표 / 배경**: 포스틱 중앙 파지 시 터짐·미끄러짐 리스크를 없애고 입고상자 벽 간섭을 피하기 위해, `pick_place`/`move_to_buffer`/`restore_from_buffer` 시 상품 정중앙(`target_pose`/`dest_pose`)에 자동으로 꼭짓점 오프셋(`+X 75, -Y 114 mm`, `J6 -45°`)과 높은 이동 높이(`transit_z=320 mm`)를 양쪽 동일 적용하는 옵션 A 구현 (`pepero_almond` 등 타 상품 100% 무영향).
+- **세부 변경 내역**: `config/products_catalog.yaml`, `grasp_planner.py`, `executor_node.py`, `mock_robot.py`.
+- **검증**: `py_compile` + `pick_place` 오프셋 좌표 검증 완료.
+
+---
+
+## 2026-11-28 11:38 — 포스틱 `pick_place` 이동 높이 `320 → 260 mm` 보정 (Dest B 외곽 도달 한계 해소)
+
+- **목표 / 배경**: Dest B 꼭짓점 오프셋 위치(`[555.8, -190.9]`, 반경 `588 mm`)에서 `Z=320/290 mm`는 M0609 상단 도달 한계를 초과해 `lift` 후 `OUT_OF_REACH`로 중단됨을 실기 `ikin`으로 확인. `Z=260.0 mm`(바닥 위 `28.4 cm`, `sol=2: J2=39.7°, J3=22.5°, J5=117.8°`)에서는 안전 도달 가능하므로 `pick_transit_z_mm`을 `260.0`으로 하향 조정.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.pick_transit_z_mm: 320.0 → 260.0`.
+
+---
+
+## 2026-11-28 11:42 — 포스틱 `pick_place` 투하 시 봉지 압박 방지용 `place_z_offset_mm: 95.0` 추가
+
+- **목표 / 배경**: 꼭짓점으로 매달려 이동한 포스틱을 `dest_z=15 mm`까지 끝까지 내려놓으면 아래에 깔린 봉지를 눌러 터질 위험이 있으므로, 투하 높이만 `+95 mm`(약 `Z=110 mm`, 바닥 위 ~13 cm)에서 부드럽게 놓도록 `place_z_offset_mm` 추가 (`pepero_almond` 등 타 상품 `0.0` 무영향).
+- **세부 변경 내역**: `config/products_catalog.yaml`, `grasp_planner.py`, `executor_node.py`, `mock_robot.py`.
+
+
+---
+
+## 2026-11-28 11:52 — 포스틱(`postick_front`) `pick_place` 실기 성공본 테스트 232개 통과, Codex 리뷰 반영 및 `main` 커밋·푸시
+
+- **목표 / 배경**: 실기 M0609 + RG2에서 정상 동작이 확인된 포스틱 수직 45° 꼭짓점 `pick_place`(`pick_offset_x=75.0`, `pick_offset_y=-114.0`, `pick_yaw_offset_deg=-45.0`, `pick_transit_z_mm=260.0`, `place_z_offset_mm=95.0`)를 단위 테스트·크로스모델 코드 리뷰까지 완료해 `origin/main`에 안전 백업함.
+- **담당 에이전트**:
+  - **Codex (`codex exec -s workspace-write` & `codex exec review --uncommitted`)**: `test_grasp_planner.py`, `test_executor_dry_run.py` 단위 테스트 5건 추가(231 passed) 및 코드 리뷰 수행(`[P1]` 보정 목적지 J6 한계 파지 전 사전 검증 누락, `[P2]` `place_z_offset_mm`이 `safe_transit_z`에 합산되어 검증 이동 높이 `260 mm`를 초과할 수 있는 문제 지적).
+  - **Antigravity**: `executor_node.py`에 파지 전 출발·목적지 J6 한계 사전 검사(`[P1]`)와 `executor_node.py`/`mock_robot.py`에 투하 높이·이동 높이 분리 계산 및 초과 시 파지 전 `OUT_OF_REACH` 거부(`[P2]`) 반영, 회귀 테스트 추가, `colcon build` + `pytest` 232/232 검증 및 Git 커밋·푸시.
+- **시행착오 및 해결 내역 (포스틱 `pick_place` 최적화)**:
+  - 중앙 파지 대신 왼쪽 하단 빈 꼭짓점 수직 45° 오프셋(`+75, -114, -45°`)으로 터짐·미끄러짐 및 입고상자 벽 간섭 해소.
+  - 초기 `pick_transit_z_mm: 320.0`은 Dest B 외곽(`[555.8, -190.9]`, 반경 `588 mm`)에서 M0609 상단 도달 한계(`OUT_OF_REACH`)에 걸려 집고 들기만 하고 중단 → 실기 `ikin` 검증 후 `260.0 mm`로 보정.
+  - 투하 시 `dest_z=15 mm`까지 내려오면 매달린 봉지를 바닥에 눌러 터질 위험 → `place_z_offset_mm: 95.0`(`Z≈110 mm`에서 부드럽게 놓기) 추가로 실기 정상 완료 확인.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **232 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.
+- **후속 조치**: 비전 확정 치수(`빼빼로 88×162`, `포스틱 180×235`, `병음료 63×208`) 기준 검토 및 `병음료(drink_front)` 파지·뒤집기 실기 설계/검증 진행.

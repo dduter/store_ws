@@ -276,8 +276,37 @@ class MockRobot(Node):
                 j6 = guard.clamp_j6_angle(-90.0)
             return plan_reorient(target, j6, guard)
 
-        destination = self._checked_pose(destination)
-        transit_z = guard.safe_transit_z(max(source_z, destination[2]))
+        def apply_pick_offset(pose):
+            if grasp_plan is None:
+                return pose
+            ox, oy, yaw_off = (
+                grasp_plan.pick_offset_x_mm, grasp_plan.pick_offset_y_mm, grasp_plan.pick_yaw_offset_deg,
+            )
+            if ox == 0.0 and oy == 0.0 and yaw_off == 0.0:
+                return pose
+            rz_rad = radians(pose[3])
+            px = pose[0] + ox * cos(rz_rad) + oy * sin(rz_rad)
+            py = pose[1] - ox * sin(rz_rad) + oy * cos(rz_rad)
+            prz = (pose[3] + yaw_off + 180.0) % 360.0 - 180.0
+            return self._checked_pose([px, py, pose[2], prz])
+
+        target = apply_pick_offset(target)
+        destination = apply_pick_offset(self._checked_pose(destination))
+        dest_base_z = destination[2]
+        if grasp_plan is not None and grasp_plan.place_z_offset_mm > 0.0:
+            place_z = dest_base_z + grasp_plan.place_z_offset_mm
+            if place_z > guard.bounds["z_max"]:
+                raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 작업 범위를 벗어났습니다.")
+            destination = self._checked_pose([
+                destination[0], destination[1], place_z, destination[3],
+            ])
+        transit_z = guard.safe_transit_z(max(source_z, dest_base_z))
+        if grasp_plan is not None and grasp_plan.pick_transit_z_mm is not None:
+            transit_z = min(guard.bounds["z_max"], max(transit_z, grasp_plan.pick_transit_z_mm))
+        if destination[2] > transit_z:
+            if grasp_plan is not None and grasp_plan.pick_transit_z_mm is not None:
+                raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 상품 이동 높이를 초과합니다.")
+            transit_z = guard.safe_transit_z(max(source_z, destination[2]))
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])
         above_destination = self._checked_pose([*destination[:2], transit_z, destination[3]])
         return [

@@ -258,6 +258,97 @@ def test_depth_offset_applied_only_to_target_not_dest(node, monkeypatch):
     assert 60.0 in heights
 
 
+def test_postick_front_pick_place_offsets(node, tmp_path, monkeypatch):
+    from store_robot_control.nodes import mock_robot
+
+    poses = []
+    move = node._robot.move_linear_4d
+
+    def record_pose(pose, *args, **kwargs):
+        poses.append(list(pose))
+        return move(pose, *args, **kwargs)
+
+    monkeypatch.setattr(node._robot, "move_linear_4d", record_pose)
+    # 기본 이동 높이를 낮춰 상품별 높이 보정이 실제로 적용되는지 확인합니다.
+    monkeypatch.setattr(node._guard, "safe_transit_z_mm", 220.0)
+    goal = GoalHandle("pick_place", category="postick_front")
+    assert run_goal(node, goal).success
+    above_target = [425.0, -94.0, 260.0, -45.0]
+    above_destination = [495.0, -314.0, 260.0, -45.0]
+    assert poses == [
+        above_target,
+        [425.0, -94.0, 25.0, -45.0],
+        above_target,
+        above_destination,
+        [495.0, -314.0, 135.0, -45.0],
+        above_destination,
+    ]
+
+    monkeypatch.setattr(mock_robot, "find_config_dir", lambda: tmp_path / "config")
+    mock = mock_robot.MockRobot()
+    try:
+        monkeypatch.setattr(mock, "_delay", 0.0)
+        monkeypatch.setattr(mock._guard, "safe_transit_z_mm", 220.0)
+        result = run_goal(mock, GoalHandle("pick_place", category="postick_front"))
+        assert result.success
+        assert list(result.final_pose) == above_destination
+
+        destination = [700.0, 0.0, 40.0, 0.0]
+        assert mock._guard.validate_pose(destination).ok
+        result = run_goal(mock, GoalHandle(
+            "pick_place", destination=destination, category="postick_front",
+        ))
+        assert not result.success
+        assert result.error_code == "OUT_OF_REACH"
+        assert result.stopped_for_safety
+
+        # 투하 높이(180 + 95 = 275)가 상품 이동 높이(260)를 초과하면 파지 전에 거부합니다.
+        result = run_goal(mock, GoalHandle(
+            "pick_place", destination=[420.0, -200.0, 180.0, 0.0], category="postick_front",
+        ))
+        assert not result.success
+        assert result.error_code == "OUT_OF_REACH"
+    finally:
+        mock.destroy_node()
+
+
+def test_postick_front_rejects_dest_j6_and_preserves_transit_z_before_grasp(node, monkeypatch):
+    # [P1] 목적지 보정 후 J6 한계(-155°) 초과 시 그리퍼를 닫기 전에 즉시 거부합니다.
+    gripped = []
+    orig_grip = node._gripper.move_mm
+    monkeypatch.setattr(node._gripper, "move_mm", lambda *args: (gripped.append(args), orig_grip(*args))[1])
+    bad_dest = run_goal(node, GoalHandle(
+        "pick_place", target=[350.0, 20.0, 40.0, 0.0],
+        destination=[420.0, -200.0, 40.0, -110.0], category="postick_front",
+    ))
+    assert not bad_dest.success
+    assert bad_dest.error_code == "J6_LIMIT_VIOLATION"
+    assert bad_dest.stopped_for_safety
+    assert not gripped
+
+    # [P2] dest_base_z=115 + place_z_offset=95=210이어도 이동 높이는 260을 유지합니다.
+    poses = []
+    move = node._robot.move_linear_4d
+    monkeypatch.setattr(node._robot, "move_linear_4d", lambda p, *a, **k: (poses.append(list(p)), move(p, *a, **k))[1])
+    ok_mid = run_goal(node, GoalHandle(
+        "pick_place", target=[350.0, 20.0, 40.0, 0.0],
+        destination=[420.0, -200.0, 115.0, 0.0], category="postick_front",
+    ))
+    assert ok_mid.success
+    assert poses[3][2] == 260.0
+    assert poses[4][2] == 210.0
+
+    # [P2] 투하 높이(180 + 95 = 275)가 상품 이동 높이(260)를 초과하면 파지 전에 거부합니다.
+    gripped.clear()
+    too_high = run_goal(node, GoalHandle(
+        "pick_place", target=[350.0, 20.0, 40.0, 0.0],
+        destination=[420.0, -200.0, 180.0, 0.0], category="postick_front",
+    ))
+    assert not too_high.success
+    assert too_high.error_code == "OUT_OF_REACH"
+    assert not gripped
+
+
 def test_health_reports_emergency_and_dry_run(node, monkeypatch):
     messages = []
     monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))

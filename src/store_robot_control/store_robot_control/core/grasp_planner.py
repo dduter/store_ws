@@ -29,6 +29,11 @@ class GraspPlan:
     vertical_lift_delta_mm: float | None = None
     vertical_mid_z_delta_mm: float | None = None
     vertical_release_z_delta_mm: float | None = None
+    pick_offset_x_mm: float = 0.0
+    pick_offset_y_mm: float = 0.0
+    pick_yaw_offset_deg: float = 0.0
+    pick_transit_z_mm: float | None = None
+    place_z_offset_mm: float = 0.0
 
 
 class GraspPlanner:
@@ -137,6 +142,26 @@ class GraspPlanner:
                 raise ValueError("vertical_back_tilt_deg은 0 이상의 유한한 실수여야 합니다.")
         fwd_tilt = optional_pos("vertical_fwd_tilt_deg")
         sweep_mm = optional_pos("vertical_sweep_mm")
+        pick_transit_z = optional_pos("pick_transit_z_mm")
+
+        def finite_float(key, default=0.0):
+            val = settings.get(key, default)
+            try:
+                val = float(val)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError(f"{key}은 유한한 실수여야 합니다.") from exc
+            if not isfinite(val):
+                raise ValueError(f"{key}은 유한한 실수여야 합니다.")
+            return val
+
+        pick_ox = finite_float("pick_offset_x_mm")
+        pick_oy = finite_float("pick_offset_y_mm")
+        pick_yaw = finite_float("pick_yaw_offset_deg")
+        if abs(pick_yaw) > 120.0:
+            raise ValueError("pick_yaw_offset_deg은 [-120, 120] 범위여야 합니다.")
+        place_z_off = finite_float("place_z_offset_mm")
+        if place_z_off < 0.0:
+            raise ValueError("place_z_offset_mm은 0 이상의 유한한 실수여야 합니다.")
         return GraspPlan(
             category, width, open_width, force, settings["grasp_depth_offset_mm"],
             settings["reorient_mode"], int(round(width * 10)), int(round(open_width * 10)),
@@ -154,4 +179,9 @@ class GraspPlanner:
             vertical_lift_delta_mm=lift_delta,
             vertical_mid_z_delta_mm=mid_z_delta,
             vertical_release_z_delta_mm=release_z_delta,
+            pick_offset_x_mm=pick_ox,
+            pick_offset_y_mm=pick_oy,
+            pick_yaw_offset_deg=pick_yaw,
+            pick_transit_z_mm=pick_transit_z,
+            place_z_offset_mm=place_z_off,
         )

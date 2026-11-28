@@ -777,8 +777,37 @@ class ExecutorNode(Node):
             self._step(handle, "retreat", 8, total, self._move_linear, waypoints[7].pose)
             return
 
-        destination = self._checked_pose(goal["dest_pose"])
-        transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
+        def apply_pick_offset(pose):
+            ox, oy, yaw_off = grasp.pick_offset_x_mm, grasp.pick_offset_y_mm, grasp.pick_yaw_offset_deg
+            if ox == 0.0 and oy == 0.0 and yaw_off == 0.0:
+                return pose
+            rz_rad = radians(pose[3])
+            px = pose[0] + ox * cos(rz_rad) + oy * sin(rz_rad)
+            py = pose[1] - ox * sin(rz_rad) + oy * cos(rz_rad)
+            prz = (pose[3] + yaw_off + 180.0) % 360.0 - 180.0
+            return self._checked_pose([px, py, pose[2], prz])
+
+        target = apply_pick_offset(target)
+        destination = apply_pick_offset(self._checked_pose(goal["dest_pose"]))
+        current_j6, target_j6 = self._predict_j6_after_linear(target[3])
+        dest_j6 = target_j6 + ((destination[3] - target[3] + 180.0) % 360.0 - 180.0)
+        if not all(self._guard.check_j6_limit(j6) for j6 in (current_j6, target_j6, dest_j6)):
+            raise TaskFailure("J6_LIMIT_VIOLATION", True)
+        dest_base_z = destination[2]
+        if grasp.place_z_offset_mm > 0.0:
+            place_z = dest_base_z + grasp.place_z_offset_mm
+            if place_z > self._guard.bounds["z_max"]:
+                raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 작업 범위를 벗어났습니다.")
+            destination = self._checked_pose([
+                destination[0], destination[1], place_z, destination[3],
+            ])
+        transit_z = self._guard.safe_transit_z(max(source_z, dest_base_z))
+        if grasp.pick_transit_z_mm is not None:
+            transit_z = min(self._guard.bounds["z_max"], max(transit_z, grasp.pick_transit_z_mm))
+        if destination[2] > transit_z:
+            if grasp.pick_transit_z_mm is not None:
+                raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 상품 이동 높이를 초과합니다.")
+            transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])
         above_destination = self._checked_pose([*destination[:2], transit_z, destination[3]])
         steps = [
