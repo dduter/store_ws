@@ -1059,3 +1059,18 @@
   - 실기 `predict_linear_j6`(`ikin`)로 파지 전 `J1` 포함 `J6`를 사전 검증하고, 대칭 2핑거(`pick_yaw_offset_deg != 0`, `|target_rz| > 90°`)에서 `±180°` 등가 각도(`-45°`, `J6: -112.9° → -16.6°`)를 자동 선택하도록 수정 + 입고상자 파지 위치를 안쪽 `[246, -516, -75, 180°]`(`TCP [171, -402]`, 벽 여유 `6.1 cm`)로 조정해 테스트 4(입고→데스크)·테스트 5(데스크→쇼핑백) 모두 1회 성공.
   - Codex 리뷰 `[P1]` 2건 반영: ① 높이 보정(`place_z_offset_mm`, `transit_z`) 완료 후 실제 명령할 4개 경유점(`above_target, target, above_destination, destination`) 전체를 `predict_linear_j6`로 사전 검증하도록 순서 조정, ② `_move_linear()`도 실기에서 동일한 `predict_linear_j6` 기준을 사용하도록 통일.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **274 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]` 2건 전건 해결.
+
+
+---
+
+## 2026-11-28 15:13 — 포스틱 폐기통 정중앙 투하(`25°` 바깥 손목 기울기) 실기 성공, 테스트·리뷰 및 백업
+
+- **목표 / 배경**: 포스틱(`postick_front`)의 마지막 미검증 경로인 `데스크 flip_zone → 폐기통` 투하에서 발생한 팔꿈치 특이점 급가속과 바닥 끌림·코너 낙하 문제를 외곽 고높이 투하 전용 `25°` 바깥 손목 기울기(`ry=155.0°`)로 해결하고 실기 성공 후 `origin/main`에 백업함.
+- **담당 에이전트**:
+  - **Antigravity**: 실기 `ikin`/`fkin` 검증(`J3=49.6°→59.5°`, 전 구간 `Z=260.0~261.5 mm` 평탄 이동), `executor_node.py`의 외곽(`r ≥ 595 mm`) 고높이(`transit_z ≥ 200 mm`) 6D 기울기 투하 경로 구현, 단위 테스트 추가, 빌드·검증·백업.
+  - **Codex (`codex exec review --uncommitted`)**: 크로스모델 코드 리뷰 수행.
+- **시행착오 및 해결 내역**:
+  - 수직 `ry=180°`로 폐기통 안쪽 `[475, -375, Z=260]` 접근 시 `J3=7.3°` 특이점 급가속 및 `Z=135 mm` 하강 중 포스틱 봉지 끌림으로 3구역 경계 코너에 낙하.
+  - 반경 방향 바깥쪽으로 손목만 `25°` 기울이는 자세(`zyz=[atan2(y,x), 155.0, rz+atan2(y,x)]`)를 적용하자 `Z=260 mm` 높이를 유지한 채 폐기통 100% 정중앙 `(534.4, -443.4)`(`r=694.4 mm`)까지 `J3=49.6°`, `J4=0.5°`로 급가속·끌림 없이 도달해 `Z=210 mm`에서 1회 깔끔히 투하 성공.
+  - Codex 리뷰 `[P1]`/`[P2]` 반영: ① 25° 바깥 기울기를 우측 외곽 폐기통 고공 투하(`X>=450, Y<=-340, Z>=120, r>=595, transit>=200`)로만 엄격히 제한해 쇼핑백/입고상자/데스크는 100% 수직 유지, ② 드라이런 사전 검증도 `linear_j6_delta`로 동일한 6D 투하 자세의 J6 변화량을 파지 전에 검사하도록 통일.
+- **검증 결과**: 실기 테스트 6 성공, `colcon build` 성공, `pytest -q src/store_robot_control/tests` **275 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.

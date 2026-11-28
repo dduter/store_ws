@@ -1,4 +1,4 @@
-from math import cos, hypot, isfinite, radians, sin
+from math import atan2, cos, degrees, hypot, isfinite, radians, sin
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
@@ -19,7 +19,7 @@ from ..core.reorient_motion import (
     plan_gentle_flip, plan_reorient, plan_two_stage_flip,
 )
 from ..core.safety_guard import SafetyGuard, load_settings
-from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
+from ..hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError, linear_j6_delta
 from ..hardware.rg2_gripper import RG2Gripper
 from .mock_robot import ACTION_NAME, REMOTE_OVERRIDE_QOS, TRANSFER_ACTIONS, find_config_dir
 
@@ -814,21 +814,43 @@ class ExecutorNode(Node):
                 raise ReorientPlanningError("OUT_OF_REACH", "투하 높이가 상품 이동 높이를 초과합니다.")
             transit_z = self._guard.safe_transit_z(max(source_z, destination[2]))
 
+        def wrap_rz(angle):
+            return (angle + 180.0) % 360.0 - 180.0
+
+        # 우측 외곽 폐기통 구역(X>=450, Y<=-340, r>=595mm) 고공 투하(Z>=120mm, transit>=200mm) 시에만
+        # 수직 팔꿈치 특이점 회피를 위해 손목을 바깥으로 25° 기울입니다 (쇼핑백·입고상자·데스크는 수직 유지).
+        outer_dest_tilt = (
+            destination[0] >= 450.0
+            and destination[1] <= -340.0
+            and destination[2] >= 120.0
+            and hypot(destination[0], destination[1]) >= 595.0
+            and transit_z >= 200.0
+        )
+
+        def dest_zyz(d_pose):
+            if not outer_dest_tilt:
+                return [0.0, 180.0, d_pose[3]]
+            ang = degrees(atan2(d_pose[1], d_pose[0]))
+            return [ang, 155.0, wrap_rz(d_pose[3] + ang)]
+
         def predict_transfer_j6(t_pose, d_pose):
             if not self._dry_run:
                 abv_t = [*t_pose[:2], transit_z, t_pose[3]]
                 abv_d = [*d_pose[:2], transit_z, d_pose[3]]
+                d_ori = dest_zyz(d_pose)
                 cur_j6, abv_t_j6 = self._robot.predict_linear_j6([*abv_t[:3], 0.0, 180.0, abv_t[3]])
                 _, t_j6 = self._robot.predict_linear_j6([*t_pose[:3], 0.0, 180.0, t_pose[3]])
-                _, abv_d_j6 = self._robot.predict_linear_j6([*abv_d[:3], 0.0, 180.0, abv_d[3]])
-                _, d_j6 = self._robot.predict_linear_j6([*d_pose[:3], 0.0, 180.0, d_pose[3]])
+                _, abv_d_j6 = self._robot.predict_linear_j6([*abv_d[:3], *d_ori])
+                _, d_j6 = self._robot.predict_linear_j6([*d_pose[:3], *d_ori])
                 return cur_j6, abv_t_j6, t_j6, abv_d_j6, d_j6
             cur_j6, t_j6 = self._predict_j6_after_linear(t_pose[3])
-            d_j6 = t_j6 + ((d_pose[3] - t_pose[3] + 180.0) % 360.0 - 180.0)
+            if outer_dest_tilt:
+                d_j6 = t_j6 + linear_j6_delta(
+                    [*t_pose[:3], 0.0, 180.0, t_pose[3]], [*d_pose[:3], *dest_zyz(d_pose)],
+                )
+            else:
+                d_j6 = t_j6 + ((d_pose[3] - t_pose[3] + 180.0) % 360.0 - 180.0)
             return cur_j6, t_j6, d_j6
-
-        def wrap_rz(angle):
-            return (angle + 180.0) % 360.0 - 180.0
 
         j6_values = predict_transfer_j6(target, destination)
         if not all(self._guard.check_j6_limit(j6) for j6 in j6_values):
@@ -851,16 +873,25 @@ class ExecutorNode(Node):
         move_args = (grasp.grasp_width_mm, transfer_force)
         above_target = self._checked_pose([*target[:2], transit_z, target[3]])
         above_destination = self._checked_pose([*destination[:2], transit_z, destination[3]])
+        if outer_dest_tilt:
+            d_ori = dest_zyz(destination)
+            transit_step = ("transit", self._move_linear_6d, (handle, [*above_destination[:3], *d_ori]))
+            place_step = ("place", self._move_linear_6d, (handle, [*destination[:3], *d_ori]))
+            retreat_step = ("retreat", self._move_linear_6d, (handle, [*above_destination[:3], *d_ori]))
+        else:
+            transit_step = ("transit", self._move_linear, (above_destination,))
+            place_step = ("place", self._move_linear, (destination,))
+            retreat_step = ("retreat", self._move_linear, (above_destination,))
         steps = [
             ("open_gripper", self._gripper.open_mm, open_args),
             ("approach", self._approach, (handle, above_target)),
             ("descend", self._move_linear, (target,)),
             ("grasp", self._gripper.move_mm, move_args),
             ("lift", self._move_linear, (above_target,)),
-            ("transit", self._move_linear, (above_destination,)),
-            ("place", self._move_linear, (destination,)),
+            transit_step,
+            place_step,
             ("release", self._gripper.open_mm, open_args),
-            ("retreat", self._move_linear, (above_destination,)),
+            retreat_step,
         ]
         for index, (stage, command, args) in enumerate(steps, 1):
             self._step(handle, stage, index, len(steps), command, *args)

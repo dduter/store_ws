@@ -438,6 +438,53 @@ def test_postick_symmetric_180_yaw_fallback_avoids_j6_limit(node, monkeypatch):
     assert 40.0 not in checked_z
 
 
+def test_outer_high_transit_drop_uses_25deg_outward_tilt(node, zoned_workspace, monkeypatch):
+    from store_robot_control.core.safety_guard import SafetyGuard
+
+    zoned_workspace["safety"]["workspace_bounds_mm"]["x_min"] = -200.0
+    zoned_workspace["safety"]["workspace_bounds_mm"]["y_min"] = -660.0
+    monkeypatch.setattr(node, "_guard", SafetyGuard(zoned_workspace))
+    poses_6d = []
+    orig_move_6d = node._robot.move_linear_6d
+    monkeypatch.setattr(
+        node._robot, "move_linear_6d", lambda p, *a, **k: (poses_6d.append(list(p)), orig_move_6d(p, *a, **k))[1],
+    )
+    result = run_goal(node, GoalHandle(
+        "pick_place", target=[275.1, 0.1, 15.0, 0.0],
+        destination=[459.4, -329.4, 115.0, 0.0], category="postick_front",
+    ))
+    assert result.success
+    assert len(poses_6d) == 6
+    assert all(pose[4] == pytest.approx(180.0) for pose in poses_6d[:3])
+    tilted = poses_6d[3:]
+    assert [pose[2] for pose in tilted] == [260.0, 210.0, 260.0]
+    assert all(pose[4] == pytest.approx(155.0) for pose in tilted)
+    assert all(pose[0] == pytest.approx(534.4) and pose[1] == pytest.approx(-443.4) for pose in tilted)
+
+    # [P1] 쇼핑백 외곽 좌표(X < 450, 낮은 투하)는 반경이 595mm 이상이어도 기존 수직(ry=180°)을 유지합니다.
+    poses_6d.clear()
+    bag = run_goal(node, GoalHandle(
+        "pick_place", target=[275.1, 0.1, 15.0, 0.0],
+        destination=[-69.8, -495.0, -40.0, 0.0], category="postick_front",
+    ))
+    assert bag.success
+    assert all(pose[4] == pytest.approx(180.0) for pose in poses_6d)
+
+    # [P2] 드라이런 사전 검증도 6D 투하 자세의 J6 변화량(-100 -> -184.7°)을 파지 전에 거부합니다.
+    gripped = []
+    orig_grip = node._gripper.move_mm
+    monkeypatch.setattr(node._gripper, "move_mm", lambda *a: (gripped.append(a), orig_grip(*a))[1])
+    node._robot._joints[5] = -100.0
+    node._robot.set_simulated_reference_pose([380.0, 0.0, 380.0, 0.0, 180.0, 0.0])
+    over_j6 = run_goal(node, GoalHandle(
+        "pick_place", target=[275.1, 0.1, 15.0, 0.0],
+        destination=[459.4, -329.4, 115.0, 0.0], category="postick_front",
+    ))
+    assert not over_j6.success
+    assert over_j6.error_code == "J6_LIMIT_VIOLATION"
+    assert not gripped
+
+
 def test_health_reports_emergency_and_dry_run(node, monkeypatch):
     messages = []
     monkeypatch.setattr(node, "_health", SimpleNamespace(publish=messages.append))
