@@ -1074,3 +1074,20 @@
   - 반경 방향 바깥쪽으로 손목만 `25°` 기울이는 자세(`zyz=[atan2(y,x), 155.0, rz+atan2(y,x)]`)를 적용하자 `Z=260 mm` 높이를 유지한 채 폐기통 100% 정중앙 `(534.4, -443.4)`(`r=694.4 mm`)까지 `J3=49.6°`, `J4=0.5°`로 급가속·끌림 없이 도달해 `Z=210 mm`에서 1회 깔끔히 투하 성공.
   - Codex 리뷰 `[P1]`/`[P2]` 반영: ① 25° 바깥 기울기를 우측 외곽 폐기통 고공 투하(`X>=450, Y<=-340, Z>=120, r>=595, transit>=200`)로만 엄격히 제한해 쇼핑백/입고상자/데스크는 100% 수직 유지, ② 드라이런 사전 검증도 `linear_j6_delta`로 동일한 6D 투하 자세의 J6 변화량을 파지 전에 검사하도록 통일.
 - **검증 결과**: 실기 테스트 6 성공, `colcon build` 성공, `pytest -q src/store_robot_control/tests` **275 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.
+
+
+---
+
+## 2026-11-28 15:46 — `origin/LLM` 로컬 통합 실기 E2E 3종 성공 및 `products_catalog.yaml` LLM·비전 통합 호환 반영
+
+- **목표 / 배경**: 원격 브랜치(`origin/LLM`, `origin/jang`, `origin/ryu`) 현황을 점검하고, 로컬에 `origin/LLM`을 선별 통합해 실물 M0609 + RG2로 GPT-4o 자연어 명령 E2E 연동 3종을 검증함. 통합 테스트 중 발견된 `product_back` 온톨로지 충돌을 수정하고 LLM·비전 메타데이터를 통합한 `config/products_catalog.yaml`만 선별해 `origin/main`에 반영함 (`store_llm_agent` 소스는 LLM 브랜치 소유이므로 `main`에 미푸시, 로컬 테스트용 유지).
+- **담당 에이전트**: Antigravity 브랜치 점검, `products_catalog.yaml` 통합·수정, 실기 E2E 검증 및 Git 백업.
+- **시행착오 및 해결 내역**:
+  - `product_back`을 `products:` 아래에 두면 LLM `KGManager`가 소매 판매 상품으로 인식해 후보 목록에 섞이고 `yolo_class=="product_back"`이 `product_name`보다 우선 매칭되는 문제 발견 → `categories.product_back`으로 이동해 로봇(`GraspPlanner` 275/275 통과)·LLM(`KGManager` 온톨로지 5건 오류 전건 해소) 양쪽 100% 호환 달성.
+  - Ubuntu 24.04에서 `openai 3.60.0`의 `httpx2`가 시스템 `brotli`와 충돌(`TypeError: process() takes no keyword arguments`), 시스템 `pydantic 1.10`은 `model_dump()` 미지원 → `openai 1.109.1`, `pydantic 2.14.4`, `rdflib 7.6.0`, `owlrl 7.6.2`, `networkx 3.7` 조합으로 해결.
+  - `ModeFSM`의 직원 조끼 디바운싱(`required_vest_frames=5`) 확인 → 5프레임 발행으로 `CUSTOMER → EMPLOYEE` 전환 후 만료 포스틱 폐기통 정중앙 25° 투하까지 성공.
+- **실기 E2E 검증 결과** (Mock `/store/scan_workspace` + 실제 GPT-4o `orchestrator` + 실물 `executor_node`):
+  1. `"빼빼로 하나 줘"` → `scan_pose → pick_place(10 N, 쇼핑백 투하) → home` 성공
+  2. `"파란색 짠 과자 하나 줘"` → 온톨로지 추론(포스틱) → `scan_pose → pick_place(꼭짓점, 쇼핑백 투하) → home` 성공
+  3. 조끼 5프레임 `EMPLOYEE` 전환 + `"유통기한 지난 거 폐기통에 버려줘"` → `scan_pose → pick_place(25° 바깥 기울기, 폐기통 정중앙 투하) → home` 성공
+- **단위 테스트**: `pytest -q src/store_robot_control/tests` **275 passed**, `git diff --cached --check` 통과.

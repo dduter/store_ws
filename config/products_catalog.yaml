@@ -46,7 +46,21 @@ categories:
     grasp_force_n: 15.0
     grasp_depth_offset_mm: 12.0
     reorient_mode: "edge_pivot_flip"
-  # Special non-retail task category
+  bottle:
+    display_name: "병음료"
+    grasp_width_mm: 20.0
+    open_width_mm: 95.0
+    grasp_force_n: 22.0
+    grasp_depth_offset_mm: 25.0
+    reorient_mode: "edge_pivot_flip"
+  # Special non-retail task category (ciga + cigarette_mock 호환 유지)
+  ciga:
+    display_name: "모형 담배 (후순위 원격)"
+    grasp_width_mm: 15.0
+    open_width_mm: 80.0
+    grasp_force_n: 15.0
+    grasp_depth_offset_mm: 15.0
+    reorient_mode: "none"
   cigarette_mock:
     display_name: "모형 담배 (후순위 원격)"
     grasp_width_mm: 15.0
@@ -54,19 +68,34 @@ categories:
     grasp_force_n: 15.0
     grasp_depth_offset_mm: 15.0
     reorient_mode: "none"
+  # 뒷면 품목 미상(product_back) 시 보수적 안전 폴백 (빼빼로/포스틱 파손 방지: 최소 파지력 3.0 N, LLM 소매 상품 목록 비오염)
+  product_back:
+    display_name: "뒷면 미상 안전 폴백"
+    reorient_mode: "back_tilt_vertical_flip"
+    vertical_edge_offset_mm: 65.0
+    open_width_mm: 108.0
+    grasp_width_mm: 84.0
+    grasp_force_n: 3.0
+    grasp_depth_offset_mm: 15.0
 
 # Optional per-product overrides (keyed by yolo_class after products are finalized).
-# Example:
-# products:
-#   choco_pie:
-#     category: "paper_box"
-#     grasp_width_mm: 25.0
-#     open_width_mm: 100.0
-#     grasp_force_n: 18.0
 products:
   # 실측: 88 x 162 mm (실물 180° 반전 확정값: 3.0N / 84.0mm 중력 힌지, 일반 이송 pick_place: 10.0N)
   pepero_almond:
+    yolo_class: "pepero_almond_front"
+    name: "아몬드 빼빼로"
+    aliases: ["빼빼로", "pepero", "pepero_front", "almond_pepero_front", "pepero_almond_front"]
     category: "paper_box"
+    display_category: "종이상자"
+    ontology_class: "BoxSnack"
+    brand: "롯데"
+    color: "초록"
+    taste: "단맛(초콜릿, 아몬드)"
+    size_mm: 88.0
+    width_mm: 88.0
+    height_mm: 162.0
+    sweetness_rank: 3
+    requires_remote_auth: false
     reorient_mode: "back_tilt_vertical_flip"
     vertical_edge_offset_mm: 65.0
     open_width_mm: 108.0
@@ -76,7 +105,20 @@ products:
     grasp_depth_offset_mm: 15.0
   # 실측: 가로 180 mm(±X) x 세로 235 mm(±Y) (실물 180° 반전 확정값: 45° 수평 두 손가락 + 50° 팔 기울기 파지 -> Z=290 들기 -> J4(-36.6°, ry=-120°) +Y 넘기기)
   postick:
+    yolo_class: "postick_front"
+    name: "포스틱"
+    aliases: ["postick", "postick_front"]
     category: "snack_bag"
+    display_category: "봉지과자"
+    ontology_class: "BagSnack"
+    brand: "농심"
+    color: "파랑"
+    taste: "짠맛(감자)"
+    size_mm: 180.0
+    width_mm: 180.0
+    height_mm: 235.0
+    sweetness_rank: 1
+    requires_remote_auth: false
     reorient_mode: "back_tilt_vertical_flip"
     vertical_entry_axis: "x"
     vertical_entry_yaw_deg: -45.0
@@ -101,23 +143,38 @@ products:
     pick_yaw_offset_deg: -45.0
     pick_transit_z_mm: 260.0
     place_z_offset_mm: 95.0
-  # 뒷면 품목 미상(product_back) 시 보수적 안전 폴백 (빼빼로/포스틱 파손 방지: 최소 파지력 3.0 N)
-  product_back:
-    category: "paper_box"
-    reorient_mode: "back_tilt_vertical_flip"
-    vertical_edge_offset_mm: 65.0
-    open_width_mm: 108.0
-    grasp_width_mm: 84.0
-    grasp_force_n: 3.0
-    grasp_depth_offset_mm: 15.0
-  # 알로에농장 등 원통 음료 (변경 가능, 실측 후 지름/힘 보정 예정)
+  # 병음료 (63 x 208 mm 직육면체, 실기 튜닝 예정)
   drink:
-    category: "paper_box"
+    yolo_class: "drink_front"
+    name: "병음료"
+    aliases: ["bottle", "bottle_front", "drink_front", "음료", "음료수"]
+    category: "bottle"
+    display_category: "병음료"
+    ontology_class: "Beverage"
+    brand: "미정"
+    color: "미정"
+    taste: "미정"
+    size_mm: 63.0
+    width_mm: 63.0
+    height_mm: 208.0
+    sweetness_rank: 2
+    requires_remote_auth: false
     reorient_mode: "in_place_yaw_180"
     open_width_mm: 95.0
     grasp_width_mm: 45.0
     grasp_force_n: 30.0
     grasp_depth_offset_mm: 25.0
+  ciga:
+    yolo_class: "ciga"
+    name: "모형 담배"
+    aliases: ["ciga_front", "cigarette_mock", "ciga"]
+    category: "ciga"
+    display_category: "담배"
+    ontology_class: "Tobacco"
+    brand: "기타"
+    color: "하양"
+    taste: "무맛"
+    requires_remote_auth: true
 
 # 비전 YOLO 확정 클래스명 <-> 카탈로그 정규 키 별칭 매핑
 aliases:
