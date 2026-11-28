@@ -355,6 +355,40 @@ def test_webcam_preview_and_headless(monkeypatch, display, no_preview, quit_key)
     else:
         assert ("circle", 15) in calls
         assert "arrow" in calls
-        assert ("text", "Q/ESC: quit") in calls
+        assert any("Q/ESC: quit" in entry[1] for entry in calls if isinstance(entry, tuple) and entry[0] == "text")
         assert calls[-3:] == [("Store Remote Hand Control", frame), ("wait", 1), "destroy"]
         assert published == []
+
+
+def test_edge_pan_xy_and_finger_z_mode():
+    def make_hand(cx, cy, extended_tips):
+        pts = [(cx, cy)] * 21
+        for tip in (8, 12, 16, 20):
+            pts[tip - 2] = (cx, cy - 0.1)
+            pts[tip] = (cx, cy - 0.25) if tip in extended_tips else (cx, cy - 0.05)
+        return pts
+
+    # 중앙 정지 박스(0.5, 0.5) 안에서는 보(4손가락) -> 정지 + OPEN
+    cmd, hud = hand_client.landmarks_to_edge_pan_command(make_hand(0.5, 0.5, (8, 12, 16, 20)), 640, 480)
+    assert hud["mode"] == "XY"
+    assert cmd == {"dx_px": 0.0, "dy_px": 0.0, "dz_px": 0.0, "gripper_closed": False}
+
+    # 우측 끝(0.95)으로 밀면 +dx_px, 주먹(0손가락) -> CLOSED
+    cmd, hud = hand_client.landmarks_to_edge_pan_command(make_hand(0.95, 0.5, ()), 640, 480)
+    assert hud["mode"] == "XY" and cmd["dx_px"] > 15.0 and cmd["dy_px"] == 0.0 and cmd["dz_px"] == 0.0
+    assert cmd["gripper_closed"] is True
+
+    # 검지 1개(8) 또는 브이 2개(8, 12)를 화면 위쪽(0.1)으로 올리면 +Z, 그리퍼 상태(CLOSED) 유지
+    for tips in ((8,), (8, 12)):
+        cmd, hud = hand_client.landmarks_to_edge_pan_command(
+            make_hand(0.9, 0.1, tips), 640, 480, prev_gripper_closed=True,
+        )
+        assert hud["mode"] == "Z"
+        assert cmd["dx_px"] == 0.0 and cmd["dy_px"] == 0.0 and cmd["dz_px"] > 15.0
+        assert cmd["gripper_closed"] is True
+
+    # 브이를 화면 아래쪽(0.9)으로 내리면 -Z, 그리퍼 상태(OPEN) 유지
+    cmd, hud = hand_client.landmarks_to_edge_pan_command(
+        make_hand(0.1, 0.9, (8, 12)), 640, 480, prev_gripper_closed=False,
+    )
+    assert hud["mode"] == "Z" and cmd["dz_px"] < -15.0 and cmd["gripper_closed"] is False

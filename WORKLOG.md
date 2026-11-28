@@ -1091,3 +1091,30 @@
   2. `"파란색 짠 과자 하나 줘"` → 온톨로지 추론(포스틱) → `scan_pose → pick_place(꼭짓점, 쇼핑백 투하) → home` 성공
   3. 조끼 5프레임 `EMPLOYEE` 전환 + `"유통기한 지난 거 폐기통에 버려줘"` → `scan_pose → pick_place(25° 바깥 기울기, 폐기통 정중앙 투하) → home` 성공
 - **단위 테스트**: `pytest -q src/store_robot_control/tests` **275 passed**, `git diff --cached --check` 통과.
+
+
+---
+
+## 2026-11-28 16:31 — 웹캠 MediaPipe 손 제스처 원격 조작(`LoL 가장자리 패닝 + 검지/브이 Z축 + 21관절 스켈레톤`) 실기 검증 및 백업
+
+- **목표 / 배경**: 병음료 튜닝이 비전 사양 재확정으로 연기됨에 따라 우선순위를 원격 조작 완성 및 웹 대시보드 구축으로 전환함. `mediapipe 0.10.21`을 설치해 실기 M0609 + RG2에서 웹캠 손 제스처 원격 조작을 연결하고, 사용자 요청에 맞춘 **방식 B (LoL 스타일 가장자리 패닝 XY + ☝️ 검지/✌️ 브이 Z축 상승·하강 + 21개 관절 스켈레톤 시각화)** 로 고도화해 실기 검증 후 `origin/main`에 백업함.
+- **담당 에이전트**:
+  - **Antigravity**: `mediapipe 0.10.21` 설치 및 `/dev/video0` 실기 검증, `hand_client.py` 방식 B(LoL 가장자리 패닝·손가락 개수 기반 Z 모드·21관절 뼈대 오버레이·`640×480` 해상도) 구현, `test_remote_node.py` 단위 테스트 보강, `remote_active=false` 원인 진단 및 실기 연동 확인, 빌드·검증·Git 백업.
+  - **Codex (`codex exec review --uncommitted`)**: 크로스모델 코드 리뷰 수행 (`hand_client.py` 및 `test_remote_node.py` 지적 사항 없음 확인).
+- **시행착오 및 해결 내역**:
+  - **증상 1 (초기 웹캠 인식 시 로봇 무반응)**: OpenCV 창 좌상단에 `dx: -113 dy: -148`이 출력되어 손 인식 자체는 정상이었으나, `remote_node` 미기동(`Subscription count: 0`) 및 `1920×1080` 기본 해상도 대비 `15 px` 데드존(`0.78%`)이 지나치게 좁아 조작감이 나빴음 → `_open_webcam()`을 `640×480`으로 설정하고, 화면 중앙 50% `STOP` 정지 영역과 바깥 25% 가장자리 패닝 구조로 개편.
+  - **증상 2 (방식 B 반영 후 창은 뜨나 로봇 무반응)**: `ros2 topic echo /store/node_health` 및 `/proc/<pid>/environ` 진단 결과, 재기동한 `remote_node`가 `REMOTE_ADMIN_KEY` 미지정 + `remote_active=false` 상태여서 보안상 `/store/remote/hand_cmd`를 무시하고 있었음 → `REMOTE_ADMIN_KEY` 지정 후 `/store/verify_remote_key`(`enable_remote: true`) 호출로 활성화하자 XY/Z/그리퍼 실기 조작 정상 동작 확인.
+  - **검토 후 보류**: 엄지척(👍) 홈 복귀 제스처는 오인식 위험 및 사용자 판단에 따라 미추가로 확정.
+- **세부 변경 내역**:
+  - `/home/yongsoo/store_ws/src/store_robot_control/store_robot_control/nodes/hand_client.py`:
+    - `HAND_CONNECTIONS`, `count_extended_fingers()`, `_edge_pan_axis()`, `landmarks_to_edge_pan_command()` 추가 (기존 `landmarks_to_hand_command()` 하위 호환 유지).
+    - `0`손가락(✊ 주먹) = `XY` + 그리퍼 닫힘, `3~4`손가락(🖐️ 보) = `XY` + 그리퍼 열림, `1~2`손가락(☝️ 검지/✌️ 브이) = `Z` 모드(XY 고정, 직전 `prev_gripper_closed` 유지, 상단 30% `+Z` / 중앙 40% 정지 / 하단 30% `-Z`).
+    - `_draw_hand_preview()`에 MediaPipe 21관절·손가락 뼈대, XY 중앙 `STOP` 박스 및 Z 상/하 가이드선, 모드/손가락 수/dx·dy·dz HUD 렌더링 추가.
+    - `_open_webcam()` 해상도 `640×480` 지정.
+  - `/home/yongsoo/store_ws/src/store_robot_control/tests/test_remote_node.py`: 미리보기 HUD 테스트 갱신 및 `test_edge_pan_xy_and_finger_z_mode()` 추가.
+- **검증 결과**:
+  - `colcon build --symlink-install --packages-select store_robot_control` 성공
+  - `pytest -q src/store_robot_control/tests` **276 passed** (20.22s)
+  - 실기 M0609 + RG2 + USB 웹캠(`/dev/video0`) XY/Z/그리퍼 원격 조작 검증 완료
+  - `codex exec review --uncommitted` 완료 (`hand_client.py`/`test_remote_node.py` 결함 0건)
+- **후속 조치**: 웹 모니터링·원격 관제 대시보드(`src/store_web_ui`) 구현 및 라이브 검증 진행.
