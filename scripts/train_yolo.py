@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
-DEFAULT_DATA = "/home/ms-04/datasets/pepero_postick/data.yaml"
+DEFAULT_DATA = "/home/ms-04/datasets/store_5classes/data.yaml"
 DEFAULT_PROJECT = "/home/ms-04/store_ws/runs"
 DEPLOY_WEIGHTS = Path("/home/ms-04/store_ws/config/weights/products_yolov8n.pt")
 

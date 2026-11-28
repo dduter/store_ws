@@ -59,11 +59,12 @@ class RealSenseNode(Node):
             elif p.is_dir():
                 candidates.extend(sorted(p.glob('*.jpg')) + sorted(p.glob('*.png')))
         else:
-            test_dir = Path.home() / 'datasets' / 'pepero_postick' / 'test' / 'images'
+            test_dir = Path.home() / 'datasets' / 'store_5classes' / 'test' / 'images'
             if test_dir.exists():
-                pep = sorted(test_dir.glob('pep_*.jpg'))[:2]
-                pos = sorted(test_dir.glob('pos_*.jpg'))[:2]
-                candidates.extend(pep + pos)
+                pep = sorted(test_dir.glob('pepero_*.jpg'))[:2]
+                pos = sorted(test_dir.glob('postick_*.jpg'))[:2]
+                drk = sorted(test_dir.glob('aloe_*.jpg'))[:2]
+                candidates.extend(pep + pos + drk)
 
         for path in candidates:
             img = cv2.imread(str(path))

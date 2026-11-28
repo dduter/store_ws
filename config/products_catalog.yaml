@@ -1,17 +1,31 @@
 # 실물 상품 카탈로그 (협의 규칙: yolo_class는 <영문명>_front, 뒷면 공통 product_back)
 # 물리 기준: 단축 폭 40-80mm, 두께 20-55mm 밝은 무광 직육면체
+# (후순위: ciga 추후 추가)
 products:
-  pepero_almonds:
+  pepero_almond:
     display_name: "아몬드 빼빼로"
     category: "snack_box"
-    yolo_class: "pepero_almonds_front"
-    grasp_width_mm: 70.0
+    yolo_class: "pepero_almond_front"
+    width_mm: 88.0
+    height_mm: 162.0
+    grasp_width_mm: 88.0
     grasp_force_n: 18.0
     grasp_depth_offset_mm: 15.0
   postick:
     display_name: "포스틱"
     category: "snack_bag"
     yolo_class: "postick_front"
+    width_mm: 180.0
+    height_mm: 235.0
     grasp_width_mm: 65.0
     grasp_force_n: 15.0
+    grasp_depth_offset_mm: 15.0
+  drink:
+    display_name: "병음료"
+    category: "drink_bottle"
+    yolo_class: "drink_front"
+    width_mm: 63.0
+    height_mm: 208.0
+    grasp_width_mm: 63.0
+    grasp_force_n: 20.0
     grasp_depth_offset_mm: 15.0

@@ -109,3 +109,93 @@
   - `~/yolo_venv/bin/python /home/ms-04/store_ws/scripts/train_yolo.py --help` 정상 출력 확인.
 - **남은 TODO**:
   - 없음.
+
+## [2026-11-27 19:13] 5개 상품 데이터셋 통합 병합 및 YOLOv8n 학습
+
+- **목적 / 배경**: Roboflow에서 다운로드한 5개 데이터셋(`pepero_almond_front.v2i.yolov8`, `postick_front.v1i.yolov8`, `pocachip_onion_front.v1i.yolov8`, `product_back.v1i.yolov8`, `aloe_drink_front.v1i.yolov8`)에서 감자깡(`Gamjakkang`) 및 잡클래스를 제외하고, 클래스명을 5개(`pepero_almonds_front`, `postick_front`, `pocachip_onion_front`, `product_back`, `aloe`)로 통일하여 단일 YOLOv8n 모델로 학습.
+- **담당 역할**:
+  - **Antigravity**: [scripts/merge_datasets.py](file:///home/ms-04/store_ws/scripts/merge_datasets.py) 작성·실행, `/home/ms-04/datasets/store_5classes` 병합 생성 및 [scripts/train_yolo.py](file:///home/ms-04/store_ws/scripts/train_yolo.py)로 YOLOv8n 학습 실행.
+- **변경 파일 및 핵심 내용**:
+  - [scripts/merge_datasets.py](file:///home/ms-04/store_ws/scripts/merge_datasets.py): 5개 데이터셋의 라벨을 정규 5개 클래스 ID(`0~4`)로 리매핑하고, 불필요한 클래스 및 빈 라벨 이미지 제거, `pepero_almonds_front` 수량 밸런싱(Train 350 / Valid 60 / Test 30) 적용.
+  - `/home/ms-04/datasets/store_5classes`: `train` 1,304장, `valid` 162장, `test` 81장 병합 완료.
+  - `/home/ms-04/store_ws/runs/store_5classes_train/weights/best.pt`: 50 epochs 학습 가중치 생성.
+- **테스트 / 리뷰 결과**:
+  - YOLOv8n Validation (`best.pt`, 162 images / 227 instances): `Precision=0.972`, `Recall=0.966`, `mAP50=0.974`, `mAP50-95=0.843` (`pepero_almonds_front` mAP50=0.980, `postick_front` mAP50=0.977, `pocachip_onion_front` mAP50=0.911, `product_back` mAP50=1.000, `aloe` mAP50=1.000).
+  - `codex exec review --uncommitted`: Codex Linux bubblewrap 샌드박스 환경 오류로 실행 불가(미검증).
+- **남은 TODO**:
+  - `config/products_catalog.yaml`에 `pocachip_onion_front`, `aloe` 항목 추가 및 필요 시 `runs/store_5classes_train/weights/best.pt`를 `config/weights/products_yolov8n.pt`로 배포.
+
+## [2026-11-27 19:21] 모바일 실시간 YOLO 웹 테스터 업그레이드 (`scripts/mobile_yolo_test.py`)
+
+- **목적 / 배경**: 방금 학습한 5종 통합 모델(`store_5classes`)을 휴대폰에서 사진 찍기뿐만 아니라 Ultralytics YOLO 앱처럼 **실시간 카메라 스트림**으로 바로 테스트할 수 있도록 개선.
+- **담당 역할**:
+  - **Antigravity**: [scripts/mobile_yolo_test.py](file:///home/ms-04/store_ws/scripts/mobile_yolo_test.py)에 5종 모델 등록, WebSocket(`/ws/predict`) 실시간 추론 + `<canvas>` 오버레이, 자체 서명 HTTPS 인증서 자동 생성(`.certs/`) 적용 후 데몬 재기동.
+- **변경 파일 및 핵심 내용**:
+  - [scripts/mobile_yolo_test.py](file:///home/ms-04/store_ws/scripts/mobile_yolo_test.py): `store_5classes` 기본 모델 추가, `getUserMedia` + WebSocket 기반 실시간 바운딩박스 오버레이 및 FPS/지연시간 표시, 기존 `/predict` 사진 모드 유지.
+- **테스트 / 리뷰 결과**:
+  - `https://0.0.0.0:8000` 기동 및 `curl -sk https://127.0.0.1:8000/health` 정상 응답 확인.
+- **남은 TODO**:
+  - 없음.
+
+## [2026-11-27 19:41] 클래스명 변경 (`aloe` -> `bottle`)
+
+- **목적 / 배경**: 사용자 요청에 따라 5번 클래스(4번 인덱스) 이름을 `aloe`에서 `bottle`로 통일.
+- **담당 역할**:
+  - **Antigravity**: [scripts/merge_datasets.py](file:///home/ms-04/store_ws/scripts/merge_datasets.py), `/home/ms-04/datasets/store_5classes/data.yaml`, `runs/store_5classes_train/weights/{best,last}.pt`의 `names[4]` 및 [scripts/mobile_yolo_test.py](file:///home/ms-04/store_ws/scripts/mobile_yolo_test.py) 색상 매핑을 `bottle`로 업데이트 후 서버 재기동.
+- **변경 파일 및 핵심 내용**:
+  - `best.pt`, `last.pt`: `names`가 `{0: 'pepero_almonds_front', 1: 'postick_front', 2: 'pocachip_onion_front', 3: 'product_back', 4: 'bottle'}`로 갱신됨.
+- **테스트 / 리뷰 결과**:
+  - `best.pt`/`last.pt`/`data.yaml` 클래스명 `bottle` 반영 및 모바일 서버 재기동 확인.
+- **남은 TODO**:
+  - 없음.
+
+## [2026-11-27 19:54] 모바일 테스터 단일 모델 정리 및 클래스명 변경 (`bottle` -> `drink_front`)
+
+- **목적 / 배경**: 모바일 테스터에서 구버전 모델을 제거해 `store_5classes`만 표시하고, 4번 인덱스 클래스명을 팀 규격에 맞게 `drink_front`로 변경.
+- **담당 역할**:
+  - **Antigravity**: [scripts/mobile_yolo_test.py](file:///home/ms-04/store_ws/scripts/mobile_yolo_test.py)에서 구버전 모델 및 선택 탭 제거, [scripts/merge_datasets.py](file:///home/ms-04/store_ws/scripts/merge_datasets.py), `data.yaml`, `best.pt`/`last.pt`의 `names[4]`를 `drink_front`로 변경 후 서버 재기동.
+- **변경 파일 및 핵심 내용**:
+  - `best.pt`, `last.pt`, `data.yaml`: `4: 'drink_front'` 반영.
+- **테스트 / 리뷰 결과**:
+  - 모바일 서버 기동 및 `/health` 확인 예정.
+- **남은 TODO**:
+  - 없음.
+
+
+## [2026-11-27 20:54] 신규 제품 클래스명(`postick_front`, `pepero_almond_front`, `drink_front`, `product_back`, `vest`) 코드·설정 반영
+
+- **목적 / 배경**: 최종 사용 클래스명(`postick_front`, `pepero_almond_front`, `drink_front`, `product_back`, `vest`, 후순위 `ciga`)에 맞춰 카탈로그·데이터셋 병합·학습·모바일 테스터·테스트 이미지 경로를 통일.
+- **담당 역할**:
+  - **Antigravity**: 카탈로그/스크립트/비전 노드 일괄 수정 및 문법·YAML·단위 테스트 검증, `WORKLOG.md` 기록.
+  - **Codex**: `codex exec review --uncommitted` 실행 시 Linux `bubblewrap` 샌드박스 권한 오류로 Git diff 조회 불가(미검증).
+- **변경 파일 및 핵심 내용**:
+  - [config/products_catalog.yaml](file:///home/ms-04/store_ws/config/products_catalog.yaml): `pepero_almonds_front` → `pepero_almond_front` 수정, `drink_front` 항목 추가(후순위 `ciga` 주석 메모).
+  - [scripts/merge_datasets.py](file:///home/ms-04/store_ws/scripts/merge_datasets.py): `TARGET_CLASSES` 및 `CLASS_MAP`을 신규 5종(`postick_front`, `pepero_almond_front`, `drink_front`, `product_back`, `vest`)으로 재정의하고 `pocachip_onion_front` 제거, `vest` 소스는 미존재 시 건너뛰도록 `optional: True` 처리.
+  - [scripts/train_yolo.py](file:///home/ms-04/store_ws/scripts/train_yolo.py): `DEFAULT_DATA`를 `/home/ms-04/datasets/store_5classes/data.yaml`로 변경.
+  - [scripts/mobile_yolo_test.py](file:///home/ms-04/store_ws/scripts/mobile_yolo_test.py): 모델 라벨 및 `CLASS_COLORS`를 신규 5종 + `ciga` 기준으로 갱신.
+  - [src/store_vision/store_vision/nodes/realsense_node.py](file:///home/ms-04/store_ws/src/store_vision/store_vision/nodes/realsense_node.py): `mock_mode` 기본 테스트 이미지 경로를 `~/datasets/store_5classes/test/images`(`pepero_*.jpg`, `postick_*.jpg`, `aloe_*.jpg`)로 갱신.
+- **테스트 / 리뷰 결과**:
+  - `python3 -m py_compile` (4개 Python 파일) 및 `yaml.safe_load` (`products_catalog.yaml`: `['pepero_almond', 'postick', 'drink']`) 정상 통과.
+  - `PYTHONPATH=src/store_vision pytest -v src/store_vision/tests`: `4 passed in 0.05s`.
+  - `codex exec review --uncommitted`: Codex Linux `bubblewrap` 샌드박스 오류로 미검증.
+- **남은 TODO**:
+  - `vest` 데이터셋(`/home/ms-04/datasets/vest.v1i.yolov8`) 확보 후 `merge_datasets.py` → `train_yolo.py --deploy` 재실행 및 필요 시 `yolo_docker_node.py`의 `vest` 감지 → `/store/vision/vest_detected` 발행 연동.
+
+
+## [2026-11-28 11:32] 실물 상품 카탈로그(`products_catalog.yaml`) 외형 치수 및 파지 폭 반영
+
+- **목적 / 배경**: 실측 제품 외형 치수(빼빼로 `88x162`, 포스틱 `180x235`, 병음료 `63x208`)를 반영하고, `grasp_width_mm` 및 `drink` 항목의 `display_name`을 실제 사양에 맞게 업데이트.
+- **담당 역할**:
+  - **Antigravity**: [config/products_catalog.yaml](file:///home/ms-04/store_ws/config/products_catalog.yaml) 수정, YAML 파싱 및 `store_vision` 단위 테스트 검증, `WORKLOG.md` 기록.
+  - **Codex**: `codex exec review --uncommitted` 실행 시 Linux `bubblewrap` 샌드박스 시작 실패로 변경분 미검증.
+- **변경 파일 및 핵심 내용**:
+  - [config/products_catalog.yaml](file:///home/ms-04/store_ws/config/products_catalog.yaml):
+    - `pepero_almond`: `width_mm: 88.0`, `height_mm: 162.0` 추가, `grasp_width_mm` `70.0` → `88.0` 변경.
+    - `postick`: `width_mm: 180.0`, `height_mm: 235.0` 추가, `grasp_width_mm: 65.0` 유지(그리퍼 최대 폭 `110.0mm` 초과 방지).
+    - `drink`: `display_name` `"음료"` → `"병음료"` 변경, `width_mm: 63.0`, `height_mm: 208.0` 추가, `grasp_width_mm` `65.0` → `63.0` 변경.
+- **테스트 / 리뷰 결과**:
+  - `yaml.safe_load` 검증 통과: `{'pepero_almond': ('아몬드 빼빼로', 88.0, 162.0, 88.0), 'postick': ('포스틱', 180.0, 235.0, 65.0), 'drink': ('병음료', 63.0, 208.0, 63.0)}`.
+  - `PYTHONPATH=src/store_vision pytest -v src/store_vision/tests`: `4 passed in 0.07s`.
+  - `codex exec review --uncommitted`: `bubblewrap` 샌드박스 시작 오류로 미검증.
+- **남은 TODO**:
+  - 실물 로봇 파지 테스트 시 포스틱 두께 방향 `grasp_width_mm` 및 각 품목의 `grasp_force_n` / `grasp_depth_offset_mm` 미세 조정.
