@@ -1,6 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_CONFIG = Path(__file__).resolve().parents[3] / "config"
@@ -40,6 +41,21 @@ TEST_WORKSPACE = {
         "buffer_slots": [[300.0, -280.0, 40.0, 0.0]],
     },
 }
+
+
+@pytest.fixture
+def zoned_workspace():
+    workspace = deepcopy(TEST_WORKSPACE)
+    safety = workspace["safety"]
+    safety["z_min_mm"] = -18.0
+    safety["workspace_bounds_mm"]["y_min"] = -660.0
+    safety["z_min_zones"] = [{
+        "name": "front_lower_boxes",
+        "x_range": [-200.0, 650.0],
+        "y_range": [-660.0, -320.0],
+        "z_min_mm": -115.0,
+    }]
+    return workspace
 
 
 def make_test_config_dir(tmp_path: Path) -> Path:

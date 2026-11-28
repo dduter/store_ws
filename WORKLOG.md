@@ -998,3 +998,20 @@
   - 기존 `teach_zones.py`는 `home`/`scan_pose`/`z_min_mm`/`buffer_slots`만 지원해 현장 티칭 시 수동 YAML 편집이 필요했음 → `flip_zone`, `display_tiers`(단별 최대 3슬롯 검증 포함), `inbound_box`/`display_area`(대각선 2점 자동 정렬) 메뉴 추가로 전체 구역 티칭 자동화.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **253 passed**, `git diff --check` 통과, Codex 리뷰 지적 전건 반영.
 - **후속 조치**: 실기에서 `teach_zones`로 최종 현장 좌표 티칭(`zones.flip_zone` 포함) → 비전·로봇 합동 `pick_place` 확인 → `hand_client` 저속 실기 테스트 → 병음료 튜닝.
+
+
+---
+
+## 2026-11-28 13:52 — 앞쪽 하단 3개 구역(구매상품·입고상자·폐기통) 실측 반영, 구역별 `z_min_zones` 안전가드 구현 및 백업
+
+- **목표 / 배경**: 진열대 배송 대기 중 확정된 데스크 앞쪽 3개 구역(구매상품 `200×290×225`, 입고상자 `415×300×130`, 폐기통 `180×225×130` — 왼쪽 `-X 10 cm` 이동 및 데스크 앞면 밀착 확정, 모두 나무 데스크보다 낮은 높이)의 실측 좌표를 반영하고, 나무 데스크(`z_min=-18 mm`)의 충돌 보호는 그대로 유지하면서 앞쪽 하단 상자 구역(`Y ≤ -320 mm`)에서만 입고상자 바닥(`-90.6 mm`) 파지가 가능하도록 구역별 `z_min_zones` 안전가드를 구현·백업함.
+- **담당 에이전트**:
+  - **Antigravity**: 실기 M0609 `ikin`으로 5점(초기 배치) 및 7점(10 cm 이동 후 최종 배치) 전 구역 수직 하향(`ry=180°`) 도달 한계 검증(`Z=260 mm → r≤620 mm`, `Z=220 mm → r≤700 mm`), [config/workspace_zones.yaml](file:///home/yongsoo/store_ws/config/workspace_zones.yaml) 경계 확장(`x_min: -200, y_min: -660`)·`z_min_zones`·실측 `inbound_box`/`flip_zone` 반영, Codex 리뷰 `[P1]`/`[P2]` 수정 및 회귀 테스트 추가, 빌드·테스트·커밋/푸시.
+  - **Codex (`codex exec -s workspace-write` & `codex exec review --uncommitted`)**: `safety_guard.py`의 `z_min_zones` 파싱/검증 및 `z_min_at(x, y)` 구현, `executor_node.py`/`mock_robot.py`/`remote_node.py`/`reorient_motion.py` 연결, 단위 테스트 17건 추가(270 passed) 및 크로스모델 리뷰 수행(`[P1]` 원격 직선 이동의 구역 경계 횡단 시 데스크 모서리 충돌 가능성, `[P2]` `apply_pick_offset` 보정 후 XY 기준 `z_min_at` 재제한 누락 지적).
+- **시행착오 및 해결 내역**:
+  - 초기 배치에서 폐기통 중심 `(619.6, -451.6)`(`r=767 mm`)은 직접 교시 시 `ry=-147°`로 기울여야만 닿고 수직 하향(`ry=180°`) `ikin`은 전 높이 `UNREACHABLE`임을 사전 발견.
+  - 전체를 `-X 15 cm` 이동하면 구매상품에서 포스틱(`rz=-45°`) 시 `J6=-154.1°`로 `-150°` 한계 초과함을 실기 `ikin`으로 사전 확인 → `-X 10 cm` 이동으로 조정해 구매상품 중앙 `(-69.8, -477.4)`(`r=482.5`, 포스틱 `J6=-135.1°`), 입고상자 `X:[36.1, 425.7], Y:[-631.4, -341.3], floor=-90.6`, 폐기통 안쪽 투하점 `(480, -380)`(`r=612.2`, `Z=260` `sol=2` OK) 모두 수직 하향 통과 확정.
+  - Codex 리뷰 `[P1]` 반영: `remote_node._target_pose()`가 직선 구간 `t∈{0, 0.5, 1}`의 최대(가장 엄격한) `z_min_at`을 적용해 데스크→하단 구역 횡단 하강 시 모서리 충돌을 원천 차단.
+  - Codex 리뷰 `[P2]` 반영: `executor_node.py`/`mock_robot.py`가 `apply_pick_offset()`으로 최종 파지 XY를 계산한 뒤 해당 XY의 `z_min_at(px, py)`로 깊이 오프셋을 제한하도록 수정.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **270 passed**, `git diff --check` 통과, `core/` 순수 Python 유지 확인, Codex 리뷰 `[P1]`/`[P2]` 전건 해결.
+- **후속 조치**: 실기에서 `입고상자 → flip_zone / 구매상품 / 폐기통` 빼빼로·포스틱 `pick_place` 테스트 → 진열대 도착 후 데스크 위 `display_tiers` 티칭 및 LLM 최종 구역 키 확정.

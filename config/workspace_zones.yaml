@@ -4,16 +4,22 @@ robot:
   tool_name: Tool_Weight
   tcp_name: GripperDA_v1
 safety:
-  # 바닥 실측(~-23.8mm) 대비 안전 여유 약 5.8mm (2차 실물 파지 테스트 반영: -16.5 -> -18.0)
+  # 나무 데스크 바닥 실측(~-23.8mm) 대비 안전 여유 약 5.8mm (2차 실물 파지 테스트 반영: -16.5 -> -18.0)
   z_min_mm: -18.0
+  # 데스크 앞쪽 하단 상자 구역(구매상품·입고상자·폐기통, 입고상자 바닥 실측 -90.6mm + 그리퍼 열림 파지 여유) 전용 최소 높이
+  z_min_zones:
+    - name: "front_lower_boxes"
+      x_range: [-200.0, 650.0]
+      y_range: [-660.0, -320.0]
+      z_min_mm: -115.0
   safe_transit_z_mm: 260.0
   approach_offset_z_mm: 80.0
   j6_min_deg: -150.0
   j6_max_deg: 150.0
   workspace_bounds_mm:
-    x_min: 180.0
+    x_min: -200.0
     x_max: 720.0
-    y_min: -420.0
+    y_min: -660.0
     y_max: 420.0
     z_max: 400.0
   max_radial_reach_mm: 760.0
@@ -96,13 +102,24 @@ zones:
       - 150.0
       - 240.0
       - 0.0
+  # 실측 뒤집기 구역 (scan_pose 화각 내 나무 데스크 중앙 흰 테이프 기준)
+  flip_zone:
+  - 275.1
+  - 0.1
+  - 15.0
+  - 0.0
+  # 실측 입고상자 (415x300x130 mm, 왼쪽 10cm 이동 확정, 안쪽 바닥 Z=-90.6 mm 닫힘 기준)
   inbound_box:
     x_range:
-    - 250.0
-    - 450.0
+    - 36.1
+    - 425.7
     y_range:
-    - 200.0
-    - 380.0
+    - -631.4
+    - -341.3
+    floor_z_mm: -90.6
+  # 실측 참고 (위 작업대 진열대 배치 완료 후 LLM 파트와 최종 키 이름 합의 예정):
+  # - 구매상품(쇼핑백, 200x290x225 mm, 담기 전용): x_range=[-155.0, 15.4], y_range=[-616.0, -338.9], drop_center=[-69.8, -477.4, 100.0, 0.0]
+  # - 폐기통(180x225x130 mm, 버리기 전용): x_range=[459.1, 609.6], y_range=[-539.5, -347.2], drop_safe=[480.0, -380.0, 100.0, 0.0]
   buffer_slots:
   - - 300.0
     - -280.0

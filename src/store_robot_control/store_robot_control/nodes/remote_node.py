@@ -310,25 +310,24 @@ class RemoteNode(Node):
         bounds = self._guard.bounds
         # 제어기 좌표의 반올림을 고려해 작업 공간 경계 안쪽에 여유를 둡니다.
         margin = 0.001
-        limits = [(bounds["x_min"], bounds["x_max"]), (bounds["y_min"], bounds["y_max"]),
-                  (self._guard.z_min_mm, bounds["z_max"])]
+        limits = [(bounds["x_min"], bounds["x_max"]), (bounds["y_min"], bounds["y_max"])]
         # 작업 공간과 이번 틱의 축별 이동 범위의 교집합을 사용합니다.
         ranges = [
             (max(low + margin, value - self._max_step), min(high - margin, value + self._max_step))
-            for value, (low, high) in zip(current, limits, strict=True)
+            for value, (low, high) in zip(current[:2], limits, strict=True)
         ]
         if any(low > high for low, high in ranges):
             return None
-        x, y, z = [
+        x, y = [
             max(low, min(high, value + delta))
-            for value, delta, (low, high) in zip(current, step, ranges, strict=True)
+            for value, delta, (low, high) in zip(current[:2], step[:2], ranges, strict=True)
         ]
         radius = self._guard.max_radial_reach_mm - margin
         if hypot(x, y) > radius:
             # 현재 XY에서 목표 방향으로 반경 경계까지 이동합니다.
-            ax, ay = (max(low, min(high, value)) for value, (low, high) in zip(current[:2], ranges[:2]))
+            ax, ay = (max(low, min(high, value)) for value, (low, high) in zip(current[:2], ranges))
             if hypot(ax, ay) > radius:
-                ax, ay = (max(low, min(high, 0.0)) for low, high in ranges[:2])
+                ax, ay = (max(low, min(high, 0.0)) for low, high in ranges)
                 if hypot(ax, ay) > radius:
                     return None
             low, high = 0.0, 1.0
@@ -339,6 +338,17 @@ class RemoteNode(Node):
                 else:
                     high = mid
             x, y = ax + low * (x - ax), ay + low * (y - ay)
+        z_min = max(
+            self._guard.z_min_at(
+                current[0] + t * (x - current[0]), current[1] + t * (y - current[1]),
+            )
+            for t in (0.0, 0.5, 1.0)
+        )
+        low = max(z_min + margin, current[2] - self._max_step)
+        high = min(bounds["z_max"] - margin, current[2] + self._max_step)
+        if low > high:
+            return None
+        z = max(low, min(high, current[2] + step[2]))
         return [x, y, z, rz]
 
     def _is_current(self, pipeline):

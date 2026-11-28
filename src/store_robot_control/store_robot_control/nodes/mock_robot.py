@@ -175,7 +175,9 @@ class MockRobot(Node):
         target = self._checked_pose(target)
         source_z = target[2]
         if self._apply_depth and grasp_plan is not None:
-            target[2] = max(guard.z_min_mm, source_z - grasp_plan.grasp_depth_offset_mm)
+            target[2] = max(
+                guard.z_min_at(target[0], target[1]), source_z - grasp_plan.grasp_depth_offset_mm,
+            )
             target = self._checked_pose(target)
         if action == "reorient":
             if grasp_plan.reorient_mode == "back_tilt_vertical_flip":
@@ -276,21 +278,25 @@ class MockRobot(Node):
                 j6 = guard.clamp_j6_angle(-90.0)
             return plan_reorient(target, j6, guard)
 
-        def apply_pick_offset(pose):
+        def apply_pick_offset(pose, *, apply_depth=False):
             if grasp_plan is None:
                 return pose
             ox, oy, yaw_off = (
                 grasp_plan.pick_offset_x_mm, grasp_plan.pick_offset_y_mm, grasp_plan.pick_yaw_offset_deg,
             )
             if ox == 0.0 and oy == 0.0 and yaw_off == 0.0:
-                return pose
-            rz_rad = radians(pose[3])
-            px = pose[0] + ox * cos(rz_rad) + oy * sin(rz_rad)
-            py = pose[1] - ox * sin(rz_rad) + oy * cos(rz_rad)
-            prz = (pose[3] + yaw_off + 180.0) % 360.0 - 180.0
-            return self._checked_pose([px, py, pose[2], prz])
+                px, py, prz = pose[0], pose[1], pose[3]
+            else:
+                rz_rad = radians(pose[3])
+                px = pose[0] + ox * cos(rz_rad) + oy * sin(rz_rad)
+                py = pose[1] - ox * sin(rz_rad) + oy * cos(rz_rad)
+                prz = (pose[3] + yaw_off + 180.0) % 360.0 - 180.0
+            pz = pose[2]
+            if apply_depth and self._apply_depth:
+                pz = max(guard.z_min_at(px, py), source_z - grasp_plan.grasp_depth_offset_mm)
+            return self._checked_pose([px, py, pz, prz])
 
-        target = apply_pick_offset(target)
+        target = apply_pick_offset(target, apply_depth=True)
         destination = apply_pick_offset(self._checked_pose(destination))
         dest_base_z = destination[2]
         if grasp_plan is not None and grasp_plan.place_z_offset_mm > 0.0:

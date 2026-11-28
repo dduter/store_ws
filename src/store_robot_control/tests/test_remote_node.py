@@ -10,6 +10,7 @@ from std_msgs.msg import Bool, String
 from store_interfaces.srv import VerifyRemoteKey
 
 from conftest import make_test_config_dir
+from store_robot_control.core.safety_guard import SafetyGuard
 from store_robot_control.nodes import hand_client, remote_node
 from store_robot_control.nodes.hand_client import (
     keyboard_key_to_command, landmarks_to_hand_command, serialize_hand_command,
@@ -106,6 +107,29 @@ def test_workspace_boundary(rig, start, cmd, axis, limit):
     value = hypot(*pose[:2]) if axis is None else pose[axis]
     assert value == pytest.approx(limit, abs=0.002)
     assert value > limit if limit == 15 else value < limit
+
+
+def test_lower_box_descent_and_desk_boundary(rig, zoned_workspace, monkeypatch):
+    node, _, _ = rig
+    monkeypatch.setattr(node, "_guard", SafetyGuard(zoned_workspace))
+    assert verify(node).granted
+    node._robot.set_simulated_reference_pose([350.0, -325.0, -110.0, 0.0, 180.0, 0.0])
+    send(node, dz_px=-1000)
+    node._control_tick()
+    lowered = node._robot.get_current_pose_4d()
+    assert lowered == pytest.approx([350.0, -325.0, -114.999, 0.0])
+
+    send(node, dy=1000, dz_px=0)
+    node._control_tick()
+    assert node._robot.get_current_pose_4d() == lowered
+
+    # [P1] 데스크 쪽에서 하단 구역으로 경계를 넘으며 동시에 하강할 때도 데스크 z_min(-18)을 넘지 않습니다.
+    node._robot.set_simulated_reference_pose([350.0, -315.0, -15.0, 0.0, 180.0, 0.0])
+    send(node, dy=-1000, dz_px=-1000)
+    node._control_tick()
+    crossed = node._robot.get_current_pose_4d()
+    assert crossed[1] < -320.0
+    assert crossed[2] >= -18.0
 
 
 def test_gripper_debounce_closes_and_opens(rig):

@@ -30,7 +30,7 @@ def plan_reorient(target_pose, current_j6_deg: float, safety_guard: SafetyGuard)
     if not all(map(isfinite, (x, y, target_z, rz, float(current_j6_deg)))):
         raise ReorientPlanningError("INVALID_POSE", "좌표와 J6 각도는 유한해야 합니다.")
     guard = safety_guard
-    z = max(guard.z_min_mm, target_z)
+    z = max(guard.z_min_at(x, y), target_z)
     lift_z = guard.poses["reorient_lift_z_mm"]
     if not guard.check_j6_limit(current_j6_deg):
         raise ReorientPlanningError("J6_LIMIT_VIOLATION", "현재 J6 각도가 허용 범위를 벗어났습니다.")
@@ -74,10 +74,10 @@ def plan_two_stage_flip(target_pose, safety_guard: SafetyGuard, flip_lift_delta_
         raise ReorientPlanningError("INVALID_POSE", "재정렬 오프셋과 기울기는 유한해야 합니다.")
     if flip_lift_delta_mm <= 0 or standing_offset_z_mm < 0:
         raise ReorientPlanningError("INVALID_POSE", "반전 상승 높이는 양수, 직립 오프셋은 0 이상이어야 합니다.")
-    z_grasp = max(guard.z_min_mm, target_z)
+    z_grasp = max(guard.z_min_at(x, y), target_z)
     transit_z = guard.safe_transit_z(z_grasp)
     lift_z = max(z_grasp + flip_lift_delta_mm, guard.safe_transit_z_mm)
-    z_stand = max(guard.z_min_mm, z_grasp + standing_offset_z_mm)
+    z_stand = max(guard.z_min_at(x, y), z_grasp + standing_offset_z_mm)
     if lift_z > guard.bounds["z_max"] or transit_z > guard.bounds["z_max"]:
         raise ReorientPlanningError(
             "OUT_OF_REACH",
@@ -150,7 +150,7 @@ def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
         raise ReorientPlanningError("J6_LIMIT_VIOLATION", "J6 각도가 허용 범위를 벗어났습니다.")
 
     x, y, target_z, rz = check.clamped_pose
-    z_grasp = max(guard.z_min_mm, target_z)
+    z_grasp = max(guard.z_min_at(x, y), target_z)
     transit_z = guard.safe_transit_z(z_grasp)
     lift_z = max(z_grasp + flip_lift_delta_mm, guard.safe_transit_z_mm)
     if max(lift_z, transit_z) > guard.bounds["z_max"] or lift_z <= z_grasp:
@@ -177,7 +177,7 @@ def plan_gentle_flip(target_pose, current_j5_deg: float, current_j6_deg: float,
             )
 
     # 기울인 자세에서 공중 낙하를 막기 위해 지지면 여유 높이까지 내려온 뒤 그리퍼를 엽니다.
-    place_z = min(swept_z, max(guard.z_min_mm + 45.0, z_grasp + release_clearance_mm))
+    place_z = min(swept_z, max(guard.z_min_at(swept_x, swept_y) + 45.0, z_grasp + release_clearance_mm))
 
     waypoints = [
         MotionWaypoint("approach", [x, y, transit_z, rz], current_j6_deg),
@@ -228,7 +228,7 @@ def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: flo
     ux, uy = (x / radial, y / radial) if radial > 1e-6 else (1.0, 0.0)
     pick_x, pick_y = x - ux * edge_offset_mm, y - uy * edge_offset_mm
     lift_x, lift_y = x - ux * edge_offset_mm / 2, y - uy * edge_offset_mm / 2
-    z_grasp = max(guard.z_min_mm, target_z)
+    z_grasp = max(guard.z_min_at(x, y), target_z)
     transit_z = guard.safe_transit_z(z_grasp)
     lift_z = z_grasp + pivot_lift_mm
     if not z_grasp < lift_z <= guard.bounds["z_max"]:
@@ -254,7 +254,7 @@ def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: flo
 
     drag_x = swept_x + ux * drag_forward_mm
     drag_y = swept_y + uy * drag_forward_mm
-    release_z = min(swept_z, max(guard.z_min_mm + 40.0, z_grasp + release_z_offset_mm))
+    release_z = min(swept_z, max(guard.z_min_at(drag_x, drag_y) + 40.0, z_grasp + release_z_offset_mm))
 
     def waypoint(stage, px, py, pz, action="move_linear", j5_delta=0.0):
         pose = [px, py, pz, rz]
@@ -328,7 +328,7 @@ def plan_back_tilt_vertical_flip(
         my = cy + mid_y_offset_mm * cos(rz_rad)
         ex = mx + sweep_y_mm * sin(rz_rad)
         ey = my + sweep_y_mm * cos(rz_rad)
-    z_grasp = max(guard.z_min_mm, target_z)
+    z_grasp = max(guard.z_min_at(x, y), target_z)
     transit_z = guard.safe_transit_z(z_grasp)
     z_max = guard.bounds["z_max"]
     min_lift_z = 90.0 if entry_axis == "x" else 160.0

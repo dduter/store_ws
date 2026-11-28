@@ -13,6 +13,7 @@ from rclpy.parameter import Parameter
 from std_msgs.msg import Bool
 from store_interfaces.action import ExecuteRobotTask
 
+from store_robot_control.core.safety_guard import SafetyGuard
 from store_robot_control.hardware.dsr_interface import DoosanRobotInterface, MotionUnreachableError
 from store_robot_control.nodes.executor_node import ExecutorNode
 from conftest import make_test_config_dir
@@ -237,6 +238,56 @@ def test_depth_offset_clamps_to_safety_floor(node, monkeypatch):
     result = run_goal(node, GoalHandle("pick_place", target=[350.0, 20.0, 20.0, 0.0]))
     assert result.success
     assert min(heights) == node._guard.z_min_mm
+
+
+def test_lower_box_pick_depth_and_desk_limit(node, zoned_workspace, tmp_path, monkeypatch):
+    from store_robot_control.nodes import mock_robot
+
+    guard = SafetyGuard(zoned_workspace)
+    monkeypatch.setattr(node, "_guard", guard)
+    monkeypatch.setattr(mock_robot, "find_config_dir", lambda: tmp_path / "config")
+    mock = mock_robot.MockRobot()
+    try:
+        mock._guard = guard
+        mock._delay = 0.0
+        executor_heights, mock_heights = [], []
+        move = node._robot.move_linear_4d
+        waypoints = mock._waypoints
+
+        def record_move(pose, *args, **kwargs):
+            executor_heights.append(pose[2])
+            return move(pose, *args, **kwargs)
+
+        def record_waypoints(*args):
+            plan = waypoints(*args)
+            mock_heights.extend(waypoint.pose[2] for waypoint in plan)
+            return plan
+
+        monkeypatch.setattr(node._robot, "move_linear_4d", record_move)
+        monkeypatch.setattr(mock, "_waypoints", record_waypoints)
+        for robot, heights in ((node, executor_heights), (mock, mock_heights)):
+            for source_z, expected_z in ((-75.0, -90.0), (-110.0, -115.0)):
+                heights.clear()
+                result = run_goal(robot, GoalHandle(
+                    "pick_place", target=[230.9, -486.3, source_z, 0.0], category="snack_bag",
+                ))
+                assert result.success
+                assert min(heights) == pytest.approx(expected_z)
+
+            result = run_goal(robot, GoalHandle("pick_place", target=[350.0, 20.0, -18.1, 0.0]))
+            assert not result.success
+            assert result.error_code == "Z_MIN_VIOLATION"
+
+            # [P2] 보정된 파지 XY가 데스크 구역(Y > -320)으로 이동하면 데스크 z_min(-18)으로 깊이를 제한합니다.
+            heights.clear()
+            result = run_goal(robot, GoalHandle(
+                "pick_place", target=[300.0, -400.0, -10.0, 180.0],
+                destination=[350.0, 0.0, 15.0, 180.0], category="postick_front",
+            ))
+            assert result.success
+            assert min(heights) == pytest.approx(-18.0)
+    finally:
+        mock.destroy_node()
 
 
 def test_depth_offset_applied_only_to_target_not_dest(node, monkeypatch):
