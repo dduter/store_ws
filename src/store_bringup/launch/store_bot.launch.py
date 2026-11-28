@@ -33,6 +33,13 @@ def generate_launch_description():
         DeclareLaunchArgument("acceleration", default_value=""),
         DeclareLaunchArgument("check_grip_detection", default_value="true"),
         DeclareLaunchArgument("apply_grasp_depth_offset", default_value="true"),
+        DeclareLaunchArgument("enable_vision", default_value="false"),
+        DeclareLaunchArgument("enable_webcam", default_value="true"),
+        DeclareLaunchArgument("enable_realsense_mock", default_value="false"),
+        include(
+            "vision.launch.py", ("config_dir", "enable_webcam", "enable_realsense_mock"),
+            IfCondition(LaunchConfiguration("enable_vision")),
+        ),
         DeclareLaunchArgument("enable_web_ui", default_value="false"),
         DeclareLaunchArgument("web_ui_host", default_value="0.0.0.0"),
         DeclareLaunchArgument("web_ui_port", default_value="8080"),

@@ -1,0 +1,22 @@
+services:
+  yolo-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yolo-detection
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=40
+      - CYCLONEDDS_URI=file:///config/cyclonedds.xml
+    volumes:
+      - ../config/weights:/config/weights:ro
+      - ../config/cyclonedds.xml:/config/cyclonedds.xml:ro
+    restart: unless-stopped

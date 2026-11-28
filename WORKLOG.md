@@ -1174,3 +1174,25 @@
   - 라이브 ROS 2 `web_ui_node` 기동 후 `/api/voice/ptt`, `/api/remote_request`, `/api/vest_simulate` E2E 검증 완료
   - Codex 크로스모델 리뷰 `[P1]`/`[P2]` 전건 반영 완료
 - **후속 조치**: 추후 비전 A의 `vest_yolov8n.pt` 학습 완료 시 `allow_vest_simulation:=false`로 기동하면 버튼이 자동 숨김되고 실시간 형광조끼 인식으로 자동 전환됨.
+
+
+---
+
+## 2026-11-28 17:32 — 비전 패키지(`store_vision`, `docker/store_yolo_docker`) 통합 수정, `store_bringup` 연동, 라이브 6노드 E2E 검증 및 백업
+
+- **목표 / 배경**: 비전 팀원 지원을 위해 `origin/ryu`의 비전 코드(`src/store_vision/`, `docker/vision_ws/store_yolo_docker/`, `config/cyclonedds.xml`)를 선별 통합하고(`origin/ryu`의 비상관 Git 히스토리는 미병합), 실기 로봇·LLM·웹 UI와 바로 맞물리도록 핵심 연동 결함 10건 및 Codex 리뷰 `[P2]` 5건을 일괄 해결해 백업함.
+- **담당 에이전트**:
+  - **Antigravity**: `origin/ryu`/`origin/jang` 전수 감사 및 결함 목록 도출(특히 `depth_layer` 규약 반전, `/home/ms-04` 하드코딩, 고정 `[420, 0, 380]` 자세, `display_name` vs `name` 불일치, 빈 `webcam_node`), `GetCurrentPosx` 타임아웃 pending future 정리, Codex 리뷰 `[P2]` 5건 직접 반영(`camera_yaw_to_base_rz`, `is_valid_se3_matrix`, XY 인접성 기반 적층 판정, VLM 미실행 시 `Unjudgeable` 표시, YOLO 타임스탬프 추가) 및 회귀 테스트 추가, 실제 USB 웹캠(`/dev/video0`) 포함 6노드 라이브 ROS 2 E2E 검증 및 Git 백업.
+  - **Codex (`codex exec -s workspace-write` & `codex exec -s read-only`)**: `store_vision` 코어·노드(`coordinate_math.py`, `depth_layer.py`, `catalog_utils.py`, `vision_vlm.py`, `image_utils.py`, `perception_node.py`, `webcam_node.py`, `realsense_node.py`), `yolo_docker_node.py`, `vision.launch.py`/`store_bot.launch.py`, 단위 테스트 61건 구현 및 크로스모델 리뷰 수행.
+- **시행착오 및 해결 내역**:
+  - **`depth_layer` 규약 반전 및 단품 오탐**: 기존 `origin/ryu`는 `1=상층 / 2=하층`으로 `store_llm_agent`(`1=1층 바닥·단일층 / 2=2층 위`)와 정반대였고 `perception_node.py`에서 호출조차 안 됨 → LLM 규약에 맞춰 반전·연결하고, Codex 리뷰 반영으로 베이스 XY 인접 반경(`120 mm`) 내 하층이 있을 때만 `2층`으로 판정해 나란히 놓인 키 다른 단품(병음료 vs 빼빼로)의 적층 오탐을 차단.
+  - **하드코딩 경로·고정 자세·이미지 Yaw 미변환**: `/home/ms-04/...` 및 `[420, 0, 380]` 더미 자세를 `find_config_dir()` + 실기 Doosan `GetCurrentPosx` 실시간 조회(폴백: 실측 `scan_pose_cartesian` ZYZ 행렬)로 교체하고, 이미지 평면 `yaw_deg`도 `camera_yaw_to_base_rz()`로 베이스 좌표계 `rz`로 변환하도록 수정.
+  - **보정 행렬 안전성**: 영행렬/비직교 행렬을 수용하던 검사를 `is_valid_se3_matrix()`(직교성·`det≈+1`·하단 행)로 강화해 잘못된 보정 시 `NO_CAMERA_CALIBRATION` 오류 반환.
+  - **웹캠 장치 점유 충돌 방지**: 빈 스켈레톤이던 `webcam_node.py`에 실제 USB 캡처 및 `REMOTE` 모드 진입 시 `/dev/video0` 자동 해제·복귀 시 재오픈을 구현해 `hand_client.py`와 충돌 없이 공존하도록 해결.
+  - **Docker YOLO 조끼 모델 & 웹 UI 하트비트**: `yolo_docker_node.py`에 선택적 `vest_yolov8n.pt` 추론(`/store/vision/vest_detected`)을 추가하고, `perception_node.py`가 `/store/node_health_raw → /store/node_health`를 브리지해 웹 UI에서 Docker YOLO 상태까지 실시간 모니터링 가능하게 통합.
+- **검증 결과**:
+  - `colcon build --symlink-install --packages-select store_vision store_bringup` 성공
+  - `pytest -q src/store_vision/tests src/store_web_ui/tests src/store_robot_control/tests` 전체 통과
+  - 라이브 ROS 2(`ROS_DOMAIN_ID=40`) 6노드 통합 E2E (`realsense_node` + 실제 USB `/dev/video0` `webcam_node` + `perception_node` + `yolo_docker_node` 브리지 + `mock_robot` + `web_ui_node`) 통과 (`realsense 5.0 FPS`, `webcam 10.0 FPS`, 6개 하트비트, `ScanWorkspace` 3D 좌표·한글 품목명·`product_back`·`checkout`/`disposal` 컨테이너 반환 확인)
+  - Codex 크로스모델 리뷰 `[P1]` 0건, `[P2]` 주요 지적 5건 반영 완료.
+- **후속 조치**: 비전 팀원에게 수정 요약 공유 및 실물 D435i 연결 후 `realsense2_camera` + Docker YOLO(`config/weights/products_yolov8n.pt`) 실기 좌표 정밀도(±5 mm) 교차 확인.
