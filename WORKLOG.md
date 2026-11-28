@@ -657,3 +657,291 @@
   - `src/store_robot_control/tests/test_grasp_planner.py`, `test_reorient_motion.py`, `test_executor_dry_run.py`: `IMG_4450.MOV` 실기 검증 기준(10단계, `ry=-135°`, `release_z_delta=115 mm`), 상품별 오프셋, `rz=25°` ZYZ 축 회전, `MockRobot` 깊이 보정 일관성 테스트 반영.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **212 passed**, Codex 리뷰 지적 전건 해결.
 - **후속 조치**: 나머지 실물 품목 2종(`포스틱`, `알로에농장`) 파지/재정렬 실측 및 비전·LLM 팀원 신규 싱크 항목 협의.
+
+---
+
+## 2026-11-27 19:52 — 확정 YOLO 클래스명 별칭 호환(`aliases`) 추가 및 포스틱 뒤집기 준비
+
+- **목표 / 배경**: 팀 확정 YOLO 클래스명(`pepero_almond_front`, `postick_front`, `drink_front`, `ciga`)을 로봇 카탈로그에서 중복 없이 자동 호환하도록 `aliases` 매핑을 추가하고, `postick`의 실기 파지·뒤집기 테스트 초기값을 준비함.
+- **담당 에이전트**: Antigravity 구현 및 단위 테스트 검증.
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `drink` 항목(`in_place_yaw_180`, `95/45 mm`, `30 N`) 추가, `postick` 초기 테스트값(`back_tilt_vertical_flip`, `vertical_edge_offset_mm: 75.0`, `110/15 mm`, `12 N`) 설정, `aliases` 섹션(`pepero_almond_front → pepero_almond`, `postick_front → postick`, `drink_front → drink`, `ciga → cigarette_mock`) 추가.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`: `self.aliases` 해석 로직 추가.
+  - `src/store_robot_control/tests/test_grasp_planner.py`: YOLO 별칭 호환 및 `postick`/`drink` 검증 테스트 갱신.
+- **검증**: `pytest -q src/store_robot_control/tests/test_grasp_planner.py` 통과.
+
+---
+
+## 2026-11-27 20:03 — 포스틱(`postick_front`) 왼쪽 하단 빈 실링 꼭짓점 뒤집기(`vertical_corner_x_offset_mm`) 추가
+
+- **목표 / 배경**: 포스틱(세로 `230 mm` 앞뒤 `±X`, 가로 `150 mm` 좌우 `±Y`, 정면 세로 배치)은 몸통을 집으면 질소 압력/과자 파손 우려가 있으므로, 내용물이 없는 왼쪽 하단 빈 실링 꼭짓점(`+X 90 mm, -Y 55 mm`)을 얇게 핀치(`open 50 mm → grasp 0 mm / 18 N`)해 오른쪽(`+Y`)으로 책장 넘기듯 뒤집는 설정 추가.
+- **담당 에이전트**: Antigravity 구현 (`pepero_almond`는 `corner_x_offset_mm=0.0`으로 100% 기존 동작 유지).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_edge_offset_mm: 55.0`, `vertical_corner_x_offset_mm: 90.0`, `open_width_mm: 50.0`, `grasp_width_mm: 0.0`, `grasp_force_n: 18.0` 적용.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`: `GraspPlan.vertical_corner_x_offset_mm: float = 0.0` 및 유한 실수 검증 추가.
+  - `src/store_robot_control/store_robot_control/core/reorient_motion.py`: `plan_back_tilt_vertical_flip()`에 `corner_x_offset_mm: float = 0.0` 추가(공구 X축 기준으로 전체 뒤집기 평면 `cx, cy` 이동, `0.0`일 때 기존과 완전 동일).
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`, `mock_robot.py`: `grasp.vertical_corner_x_offset_mm` 전달.
+- **검증**: `py_compile` + `plan_back_tilt_vertical_flip` 실기 타겟 `[275.7, -11.5, -15.5, 0.0]` 계획 좌표 확인.
+
+---
+
+## 2026-11-27 20:12 — 포스틱 1차 실기 피드백 반영(바깥 꼭짓점 보정, 반대 J4 `\` 기울기, J6 90° 회전, 좁은 집게)
+
+- **목표 / 배경**: 포스틱 1차 테스트에서 몸통 안쪽을 누르며 봉지가 터질 뻔한 문제를 해결하기 위해, 파지점을 바깥쪽 왼쪽 하단 귀퉁이(`+X +15 mm`, `-Y -30 mm`)로 이동하고 `Z=+10 mm`로 높이며, J4 반대 방향(`\` 기울기) + J6 90° 회전 + 좁은 개방(`25 mm`)을 적용함.
+- **담당 에이전트**: Antigravity 구현 (`pepero_almond` 기본값 `vertical_tilt_sign=-1, vertical_j6_offset_deg=0.0` 완전 유지).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`을 `vertical_corner_x_offset_mm: 105.0`, `vertical_edge_offset_mm: 85.0`, `vertical_tilt_sign: 1`, `vertical_j6_offset_deg: 90.0`, `open_width_mm: 25.0`, `grasp_width_mm: 0.0`, `grasp_force_n: 18.0`, `grasp_depth_offset_mm: 15.0`으로 업데이트.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`: `vertical_tilt_sign` (`-1|1`) 및 `vertical_j6_offset_deg` (`[-120, 120]`) 필드·검증 추가.
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`: `sign * (180 - tilt)` 및 `90 + j6_off` ZYZ 자세 계산 적용 (`mid_orientation`과 연속성 유지).
+- **검증**: `py_compile` + 계획 좌표/자세 출력 확인.
+
+---
+
+## 2026-11-27 20:16 — 포스틱 2차 실기 피드백 반영(`-X` 10 mm 보정, 상승 높이 `+40 mm`, 넘길 때 기존 J4 부호 `/` 유지)
+
+- **목표 / 배경**: 포스틱 2차 테스트 피드백에 맞춰 파지 X를 `-10 mm` 안쪽으로 당기고(`380.7 → 370.7 mm`), 들어 올리는 높이를 `+40 mm` 높이며(`lift 215 mm / mid 195 mm`), 잡을 때는 `\`(`+1`, `ry=+150°`)·넘길 때는 기존 `/` 부호(`-1`, `ry=-135°`)로 분리 설정.
+- **담당 에이전트**: Antigravity 구현 (`pepero_almond` 100% 무영향).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_corner_x_offset_mm: 95.0`, `vertical_fwd_tilt_sign: -1`, `vertical_lift_delta_mm: 205.0`, `vertical_mid_z_delta_mm: 185.0` 적용.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`, `nodes/executor_node.py`, `nodes/mock_robot.py`: 상품별 `vertical_fwd_tilt_sign`, `vertical_lift_delta_mm`, `vertical_mid_z_delta_mm` 오버라이드 지원 추가.
+- **검증**: `py_compile` + 계획 좌표/자세 검증.
+
+---
+
+## 2026-11-27 20:22 — 포스틱 ㄷ자 옆면 슬라이드 진입(`vertical_slide_in_y_mm`) 및 `-X` 15 mm 추가 보정
+
+- **목표 / 배경**: 포스틱 봉지 끝부분이 바닥에서 약 3.5 cm(`Z ≈ +11 mm`) 떠 있어 수직 하강 시 끝단을 눌러 밀어내는 현상을 해결하기 위해, 봉지 바깥쪽(`-Y 45 mm`) 빈 공간에서 먼저 하강한 뒤 `+Y` 수평 슬라이드로 끝단을 감싸 잡는 ㄷ자 진입(`vertical_slide_in_y_mm: 45.0`)과 `-X` 추가 보정(`95 → 80 mm`)을 적용함.
+- **담당 에이전트**: Antigravity 구현 (`pepero_almond`는 `vertical_slide_in_y_mm=0.0`으로 기존 10단계 완전 유지).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`을 `vertical_corner_x_offset_mm: 80.0` (`X=355.7 mm`), `vertical_slide_in_y_mm: 45.0` (`Y: -141.5 → -96.5 mm`), `open_width_mm: 35.0`으로 업데이트.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`: `vertical_slide_in_y_mm: float = 0.0` 추가 및 검증.
+  - `src/store_robot_control/store_robot_control/nodes/executor_node.py`: `slide_in > 0`일 때 11단계 ㄷ자 진입(`approach_back[Y_outside, Z_lift] → descend_outside[Y_outside, Z_grasp] → slide_in_grasp[Y_grasp, Z_grasp] → grasp → lift_back[Y_grasp, Z_lift] → ...`) 분기 추가.
+- **검증**: `py_compile` + ㄷ자 진입 좌표 확인.
+
+---
+
+## 2026-11-27 20:24 — 포스틱 파지 시 J4 기울기 강화(`vertical_back_tilt_deg: 55.0`)
+
+- **목표 / 배경**: ㄷ자 옆면 슬라이드 진입 시 기존 `30°` 기울기로는 수직에 가까워 떠 있는 봉지 끝단을 옆에서 감싸기 어려우므로, `postick`의 파지 기울기를 `55°`(`ry = +125°`)로 크게 눕혀 수평에 가깝게 진입하도록 보강함.
+- **담당 에이전트**: Antigravity 구현 (`pepero_almond`는 `30.0°` 그대로 유지).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick.vertical_back_tilt_deg: 55.0` 추가.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`, `reorient_motion.py`, `nodes/executor_node.py`, `nodes/mock_robot.py`: 상품별 `vertical_back_tilt_deg` 오버라이드 지원, `back_tilt_deg` 허용 상한 `55 → 75°` 및 IK `J4` 허용 변화량 `65 → 85°` 확장.
+- **검증**: `py_compile` + 계획 검증 완료.
+
+---
+
+## 2026-11-27 20:25 — 포스틱 파지 J4 기울기 `40.0°`로 하향 조정 (입고상자 간섭 방지)
+
+- **목표 / 배경**: `55°` 기울기에서 `-Y` 쪽 노란색 입고상자와 로봇 손목/팔 간섭 우려가 있어 사용자 요청에 따라 `40.0°`(`ry = +140°`)로 안전 하향 조정.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.vertical_back_tilt_deg: 55.0 → 40.0`.
+
+---
+
+## 2026-11-27 20:32 — 포스틱 ㄷ자 진입 시 봉지 밀림 방지를 위해 `open_width_mm` `35 → 50 mm` 확대
+
+- **목표 / 배경**: `40°` 기울어진 상태에서 `open_width_mm=35 mm`는 상하 집게 틈이 좁아 슬라이드 진입 시 봉지 끝단이 밀리므로 `50.0 mm`로 1.5 cm 더 넓혀 넉넉하게 감싸 잡도록 조정.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.open_width_mm: 35.0 → 50.0`.
+
+---
+
+## 2026-11-27 20:39 — 포스틱 J6 오프셋 `90° → 0°` 변경 (집게 날을 봉지 모서리 선과 평행 정렬)
+
+- **목표 / 배경**: 기울기 `40°`는 유지하면서 두 집게가 봉지 왼쪽 금색 실링 모서리선(`±X`)과 평행하게 맞물려 잡도록 `vertical_j6_offset_deg`를 `90.0° → 0.0°`로 전환 (`toolX = [-1, 0, 0]`으로 두 손가락 높이가 동일해져 아래쪽 손가락 테이블 충돌도 원천 해소).
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.vertical_j6_offset_deg: 90.0 → 0.0`.
+
+---
+
+## 2026-11-27 20:43 — 포스틱 앞쪽(`+X`) 평행 ㄷ자 진입(`vertical_entry_axis: "x"`, 정사영 평행) 적용
+
+- **목표 / 배경**: 위에서 본 정사영 기준으로 그리퍼가 포스틱 왼쪽 금색 실링 끝단(`±X`)과 수직이 아닌 **평행(수평)**으로 만나도록, 진입 축을 `Y–Z`에서 `X–Z`(`vertical_entry_axis: "x"`, `[0, -140, 0]`)로 전환. 앞쪽 `+X` 빈 공간에서 하강 후 `-X`로 `40 mm` 수평 슬라이드해 위/아래 두 손가락이 끝단을 감싸 잡음(노란 입고상자 간섭 0%, `J4 ≈ -6°`, 실기 M0609 IK 전 단계 통과 검증 완료).
+- **담당 에이전트**: Antigravity 구현 및 실기 IK 검증 (`pepero_almond`는 기본값 `vertical_entry_axis="y"`로 100% 무영향).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_entry_axis: "x"`, `vertical_slide_in_y_mm: 40.0`, `vertical_lift_delta_mm: 125.0` (`Z_app=160 mm`, `J5 ≈ 128°`), `vertical_mid_z_delta_mm: 185.0` (`Z_mid=215 mm`) 적용.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`, `nodes/executor_node.py`: `vertical_entry_axis` (`"x"|"y"`) 지원 추가.
+- **검증**: `py_compile` + 실기 M0609 `ikin` 7단계 연속 관절해 검증.
+
+---
+
+## 2026-11-27 20:52 — 포스틱 `-X` 가로 뒤집기(진입 `[0, -140, 0]` → 반대 각도 `[0, +150, 0]` 넘기기) 적용
+
+- **목표 / 배경**: 포스틱은 `±Y`(230 mm) 세로 방향보다 `±X`(150 mm) 가로 방향이 짧으므로, 앞쪽 `+X`에서 `[0, -140, 0]`으로 진입해 파지한 뒤 같은 `Y=-96.5` 선상에서 `-X`로 `140 mm`(`355.7 → 275.7 → 215.7 mm`) 이동하며 반대 각도 `[0, +150, 0]`으로 넘기는 가로 뒤집기 적용 (실기 M0609 IK/FK 단조 하강·`X > 212 mm`·노란 상자 비간섭 검증 완료).
+- **담당 에이전트**: Antigravity 구현 및 실기 IK/FK 검증 (`pepero_almond` 100% 무영향).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_fwd_tilt_deg: 30.0`, `vertical_sweep_mm: 60.0`, `vertical_fwd_tilt_sign: 1` 적용.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`, `reorient_motion.py`, `nodes/executor_node.py`, `nodes/mock_robot.py`: `entry_axis="x"`일 때 `-X` 방향 가로 스윕(`355.7 → 275.7 → 215.7`) 및 반대 X-Z 기울기(`[0, +150, 0]`) 지원 추가.
+- **검증**: `py_compile` + 실기 M0609 IK/FK 검증 통과.
+
+---
+
+## 2026-11-27 20:59 — 포스틱 영상(`IMG_4452.MOV`) 분석 반영: `+X` 전방 눕히기 반전(`255.7 → 430.7 mm`) 적용
+
+- **목표 / 배경**: `IMG_4452.MOV` 프레임 확인 결과, 앞쪽 `+X` ㄷ자 진입 파지(`v3_3.jpg`) 및 공중 들기(`v3_4.jpg`)는 완벽 성공했으며, `v3_4.jpg`에서 포스틱 앞면("포스틱")이 사용자 쪽(`+X`)을 향하고 있음을 확인. 기존 `-X` 넘기기는 로봇 베이스 회피로 `J1`이 `-72.7°` 크게 비틀어져 부자연스러웠으므로, 높이(`Z=255 mm`) 든 뒤 앞쪽 빈 공간(`+X: 255.7 → 430.7 mm`, `Z: 255 → 95 mm`)으로 직선처럼 부드럽게 눕혀 앞면이 바닥으로 가고 뒷면이 위로 오게 반전하도록 개선 (실기 M0609 IK/FK 검증: `ΔJ1=12.8°`, `J4≈-6°`, `J6≈-11°`, 비틀림 0).
+- **담당 에이전트**: Antigravity 영상 분석, 실기 IK/FK 검증 및 구현 (`pepero_almond` 100% 무영향).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_sweep_mm: 175.0`, `vertical_fwd_tilt_deg: 40.0`, `vertical_fwd_tilt_sign: -1`, `vertical_mid_z_delta_mm: 225.0`, `vertical_release_z_delta_mm: 65.0` 적용.
+  - `src/store_robot_control/store_robot_control/core/grasp_planner.py`, `reorient_motion.py`, `nodes/executor_node.py`, `nodes/mock_robot.py`: `vertical_release_z_delta_mm` 오버라이드 및 `entry_axis="x"`의 `+X` 전방 눕히기 경로 추가.
+- **검증**: `py_compile` + 실기 M0609 IK/FK 검증 통과.
+
+---
+
+## 2026-11-27 21:02 — 포스틱 높이 상향(`Z=315 mm`) + J4 `-Y` 방향 회전 뒤집기(`Y: +80 → -140 mm, ry=-120°`) 적용
+
+- **목표 / 배경**: 포스틱 대각선 길이(`~275 mm`) 대비 `Z=255 mm` 높이가 부족해 뒤집히지 않았으므로, 사용자 제안대로 `Z=315 mm`까지 충분히 높이 들어 올린(`Y=+80 mm`) 뒤 `J4`를 `-Y` 방향(`0° → -51.6°`, `ry=-120°`, `Y: +80 → -140 mm`)으로 회전시켜 뒤집도록 변경 (실기 M0609 IK/FK 검증: 전 구간 `X≈345~356 mm`, `Z: 315→150 mm` 단조 하강, 손목은 `+Y` 빈 공간 쪽이라 노란 상자 비간섭).
+- **담당 에이전트**: Antigravity 구현 및 실기 IK/FK 검증 (`pepero_almond` 100% 무영향).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_mid_z_delta_mm: 285.0` (`Z=315 mm`), `vertical_release_z_delta_mm: 120.0` (`Z=150 mm`), `vertical_fwd_tilt_deg: 60.0` (`ry=-120°`), `vertical_sweep_mm: 220.0` (`Y: +80 → -140 mm`) 적용.
+  - `src/store_robot_control/store_robot_control/core/reorient_motion.py`, `nodes/executor_node.py`: `entry_axis="x"`일 때 `mid(Y=+80, Z=315) → end(Y=-140, Z=150, ry=-120°)` J4 `-Y` 회전 반전 경로 적용.
+- **검증**: `py_compile` + 실기 M0609 IK/FK 검증 완료.
+
+---
+
+## 2026-11-27 21:06 — 포스틱 넘기기 J4 정반대 부호(`+50.7°`, `ry=+120°`) + `+Y` 방향(`-40 → +140 mm`) 적용
+
+- **목표 / 배경**: 사용자 피드백에 따라 넘기기 각도를 기존 `-120°`(`J4=-51.6°`)의 정반대인 `+120°`(`J4=+50.7°`, `\` 모양)로 반전하고, 노란 입고상자 충돌을 방지하면서 왼쪽 끝단을 오른쪽 빈 공간(`Y: -40 → +140 mm`)으로 넘기도록 수정 (실기 M0609 IK/FK 검증: `ΔJ1=2.7°` 수직 상승 후 `Y: -40 → +140, Z: 315 → 150 mm` 단조 하강).
+- **세부 변경 내역**: `config/products_catalog.yaml` (`vertical_fwd_tilt_sign: 1`, `vertical_sweep_mm: 180.0`), `reorient_motion.py` (`mid_shift_y = -28.5`, `+Y` 스윕).
+
+---
+
+## 2026-11-27 21:09 — 포스틱 45° 대각선 진입(`vertical_entry_yaw_deg: -45.0`) 적용
+
+- **목표 / 배경**: 직전 `+Y` 반대 J4 넘기기(`mid Y=-40, Z=315 → end Y=+140, Z=150, ry=+120°`)를 유지하면서, 그리퍼와 봉지 끝단이 45° 대각선으로 만나도록 `vertical_entry_yaw_deg: -45.0`(`[-45, -140, 0]`, 바깥 대기 `[384.0, -124.8]` → 대각선 40 mm 슬라이드 `[355.7, -96.5]`) 적용 (실기 M0609 IK 전 단계 통과 검증 완료).
+- **세부 변경 내역**: `config/products_catalog.yaml`, `grasp_planner.py`, `executor_node.py`에 `vertical_entry_yaw_deg` 추가 및 대각선 슬라이드 진입 벡터 반영.
+
+---
+
+## 2026-11-27 21:13 — 포스틱 180° 뒤집기 첫 실기 성공! 안정성 향상을 위해 45° 대각선 진입 깊이 `+15 mm` 심화
+
+- **목표 / 배경**: `45°` 대각선 ㄷ자 진입 + `Z=315 mm` 높이 들기 + 반대 J4(`+50.7°`, `ry=+120°`) `+Y` 넘기기로 **포스틱 실기 180° 뒤집기 첫 성공** 달성! 파지 안정성을 높이기 위해 바깥 시작 위치(`[384.6, -125.4]`)는 그대로 유지하면서 파지점을 과자 안쪽으로 45° 대각선 방향 `15 mm` 더 깊게 들어가도록 보정.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_corner_x_offset_mm: 80 → 70`, `vertical_edge_offset_mm: 85 → 75`, `vertical_slide_in_y_mm: 40 → 55`.
+
+---
+
+## 2026-11-27 21:16 — 포스틱 진입 기울기 `55°`로 바닥 쪽 밀착 + 집게 개방 `50 → 30 mm` 축소
+
+- **목표 / 배경**: 사용자 요청에 따라 진입 각도를 바닥 쪽으로 `15°` 더 눕히고(`40° → 55°`, `ry=-125°`), 집게 개방을 `50 → 30 mm`로 줄여 아래쪽 손가락 처짐을 오히려 `1.7 mm` 더 줄임으로써 바닥 충돌 위험 없이 더 수평에 가깝게 진입하도록 개선. 실기 M0609 `J5` 상한(`130°`) 여유 확보를 위해 `entry_axis="x"`의 진입 대기 높이 하한을 `90 mm`(`J5=129.3°`)로 조정(`pepero_almond` 100% 무영향).
+- **세부 변경 내역**: `config/products_catalog.yaml` (`vertical_back_tilt_deg: 55.0`, `vertical_lift_delta_mm: 60.0`, `open_width_mm: 30.0`), `reorient_motion.py` (`min_lift_z = 90.0 if entry_axis == "x" else 160.0`).
+
+---
+
+## 2026-11-27 21:17 — 포스틱 `55°` 진입 시 집게 개방폭 `30 → 50 mm` 복원
+
+- **목표 / 배경**: `55°` 기울기에서 `30 mm` 개방은 수직 틈이 `~1.7 cm`로 좁아 봉지 끝단을 놓치므로 `50.0 mm`(수직 틈 `~2.9 cm`, `Z=30 mm` 기준 바닥과 약 `2.3 cm` 안전 여유)로 복원.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.open_width_mm: 30.0 → 50.0`.
+
+---
+
+## 2026-11-27 21:26 — 2일차 마무리 및 내일(3일차) 업무 인계 요약
+
+- **오늘 완료된 핵심 성과**:
+  1. `pepero_almond` 실물 `pick_place` (`84 mm / 3 N`) + **180° 뒤집기(`back_tilt_vertical_flip`, 10단계)** 실기 반복 검증 완료 및 `main` 커밋·푸시(`e04cef3`, `pytest` 212/212 통과, Codex 2회 리뷰 반영).
+  2. 팀 확정 YOLO 클래스명(`pepero_almond_front`, `postick_front`, `drink_front`, `ciga`) 별칭 호환(`aliases`) 추가.
+  3. **`postick_front` 180° 뒤집기 첫 실기 성공** (`45°` 대각선 ㄷ자 진입 + `Z=315 mm` 높이 들기 + 반대 `J4 +50.7°` `+Y` 넘기기 — 현재 작업 트리에 미커밋 실험본 보관 중).
+- **현재 Git 상태**: `e04cef3` 이후 `postick` 뒤집기 실험 변경사항(`config/products_catalog.yaml`, `grasp_planner.py`, `reorient_motion.py`, `executor_node.py`, `mock_robot.py`, `test_grasp_planner.py`, `WORKLOG.md`) 로컬 유지 중(내일 최적화 완료 후 테스트·Codex 리뷰·커밋 예정).
+- **내일(3일차) 우선순위 업무**:
+  1. **포스틱 뒤집기 안정화**: `40° + open 80 mm + Z=35 mm`(수직 포획 6.1 cm)로 오목/볼록 귀퉁이 편차 테스트 → 연속 5회 성공률 확인. (필요 시 금색 실링 중앙 파지 대안 비교)
+  2. **포스틱 `pick_place` 실기 확인**: 뒤집기 외에 일반 입고/진열 이동용 파지 폭·힘 확인.
+  3. **음료(`drink_front`, 알로에농장 또는 확정 품목) 실측 및 테스트**: 지름·높이·무게 실측 → `pick_place`(`30~40 N`) + 제자리 `J6` 180° 회전(`in_place_yaw_180`) 실기 검증.
+  4. **포스틱·음료 최종본 단위 테스트 동기화 + Codex 코드 리뷰 + `main` 커밋/푸시**.
+  5. **비전·LLM 팀원 싱크 회신 반영 및 합동 연동 준비**:
+     - `product_back` 품목 식별 규칙(`product_name` 전달) 확정
+     - 고정 Flip Zone(`zones.flip_zone`) 도입 여부 확정 및 `teach_zones`로 최종 현장 좌표(진열대 9슬롯, 버퍼 3슬롯, Flip Zone, `scan_pose`) 실측
+     - 비전 `pose_3d_base` + `apply_grasp_depth_offset:=true` 실기 합동 `pick_place` 1회 검증(XY ±5 mm 이내 확인)
+  6. **원격 조작(`hand_client`) 마무리**: 15 Hz 중립 프레임 키보드 희석 버그 수정, OpenCV 미리보기 창 추가, 실기 원격 조작 테스트.
+
+### 내일 추가 확인 및 질문 예정 (21:30 추가)
+- **LLM 회신 2건 확인**:
+  1. https://doosan-rokey.slack.com/archives/C0CG89UDUES/p1795777566073149?thread_ts=1795774887.970189&cid=C0CG89UDUES
+  2. https://doosan-rokey.slack.com/archives/C0CG89UDUES/p1795779374103809
+- **팀원 질문 예정 (`product_back` 뒤집기 방식 결정)**:
+  - 뒷면 YOLO 클래스가 `product_back` 하나로 통합되어 있는데, 실제 로봇 제어는 상품별로 파지·뒤집기 방식이 완전히 다름(빼빼로: `84 mm / 3 N` 끝단 중력 힌지, 포스틱: `45°` 대각선 ㄷ자 진입 + `Z=315` 반대 `J4` 넘기기, 음료: 강한 힘 + 제자리 `J6` 180° 회전).
+  - 상품이 뒤집어져(`product_back`) 있을 때 **어떤 방법으로 뒤집을지(어느 품목인지)를 비전(VLM/3D bbox 크기 추정)에서 판별해 `product_name`으로 넘겨줄지, 아니면 LLM/오케스트레이터에서 어떻게 결정할지** 합의 필요.
+
+---
+
+## 2026-11-28 10:21 — LLM 파트 회신 접수 (연동 규약 반영 완료, `flip_zone` 도입 확정, 3대 확정 요청)
+
+- **LLM 파트 반영 완료 내역** (`pytest` 250건 + `MockRobot` ROS 2 E2E 통과, LLM 브랜치 푸시):
+  - `ExecuteRobotTask.product_category`에 구체 품목 키(`pepero_almond`, `postick`, `drink`, `ciga`) 전달 (`grasp_width_mm=0.0`, `grasp_force_n=0.0` 유지)
+  - `yolo_class == "vest"` 스캔·파지 필터링 적용
+  - `reorient → scan_pose + ScanWorkspace → pick_place` 폐루프 적용
+  - `product_back`일 때 비전/VLM `product_name` 또는 앞면 스캔 이력(`track_id`) 기반으로 원래 품목 키 유지 전달 (완전 미상 시 현재 `""` → `defaults` 전달)
+  - **고정 `flip_zone` 도입 확정**: `config/workspace_zones.yaml`에 `zones.flip_zone` 입력 시 자동으로 `pick_place(→ flip_zone, rz=0°) → reorient(flip_zone) → scan_pose → pick_place` 실행 (`scan_pose` 화각 내 위치 필수)
+- **로봇 파트 회신/확정 필요 3건**:
+  1. `drink`(병음료) RG2 실측 파지값 (`open/grasp/force/depth/reorient_mode`)
+  2. `product_back` 완전 미상 시 안전 폴백 키·파라미터 (기존 `defaults` `20 mm / 18 N / edge_pivot_flip`은 빼빼로·포스틱 파손 위험 → 보수적 `product_back` 폴백 + 비전 3D 크기 기반 `product_name` 채우기 권장)
+  3. `workspace_zones.yaml` 최종 실측 좌표 (`zones.flip_zone` 포함, `display_tiers`, `buffer_slots`, `display_area`, `inbound_box`, `scan_pose`)
+
+---
+
+## 2026-11-28 10:32 — 포스틱 오목/볼록 편차 흡수용 넓은 포획(`40° + open 80 mm + Z=35 mm`) 적용
+
+- **목표 / 배경**: 전일 마지막 버전(`55° + open 50 mm`, 수직 포획 `2.8 cm`)이 귀퉁이 오목/볼록 편차로 실패함에 따라, 수직 포획 범위를 `6.1 cm`(2.1배)로 넓히는 `40° + open 80 mm + Z=35 mm` 설정을 적용해 오목/볼록 모두 안정적으로 잡히는지 실기 테스트.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_back_tilt_deg: 55.0 → 40.0`, `vertical_lift_delta_mm: 60.0 → 125.0`, `open_width_mm: 50.0 → 80.0`.
+
+---
+
+## 2026-11-28 10:44 — 포스틱 수직 45° 인형뽑기 파지(`back_tilt_deg: 0.0`, `J6 -45°`) + 기존 J4 `+Y` 넘기기 적용
+
+- **목표 / 배경**: 기울어진 옆면 슬라이드 진입의 오목/볼록 높이 편차를 근본 해소하기 위해, 사용자 스케치대로 **수직 하강(`[0, 180, -45]`) + 두 손가락이 왼쪽 하단 꼭짓점 양옆 빈 공간(`+X`/`-Y` 바깥)으로 내려가 `70 → 0 mm` 대각선으로 감싸 쥐는 인형뽑기 방식**으로 전환하고, 이후 검증된 `Z=315 mm` 높이 들기 + 반대 `J4(+49.9°, ry=+120°)` `+Y` 넘기기로 연결함 (실기 M0609 IK/FK 5단계 전 구간 검증 완료: 파지 중 `J4=0.0°`, 노란 상자 비간섭, 바닥 충돌 0).
+- **세부 변경 내역**:
+  - `config/products_catalog.yaml`: `postick`에 `vertical_back_tilt_deg: 0.0`, `vertical_entry_yaw_deg: -45.0`, `vertical_corner_x_offset_mm: 62.0`, `vertical_edge_offset_mm: 101.0`, `vertical_slide_in_y_mm: 0.0`, `open_width_mm: 70.0`, `vertical_lift_delta_mm: 172.0`, `vertical_mid_z_delta_mm: 327.0`, `vertical_release_z_delta_mm: 162.0` 적용.
+  - `grasp_planner.py`, `reorient_motion.py`, `executor_node.py`: `back_tilt_deg == 0.0` 수직 인형뽑기 진입(`[0, 180, rz + entry_yaw]`) 지원 추가 (`pepero_almond` 100% 무영향).
+- **검증**: `py_compile` + 실기 M0609 IK/FK 검증 통과.
+
+---
+
+## 2026-11-28 10:57 — 포스틱 수직 45° 인형뽑기 파지점을 꼭짓점 바깥쪽(`+X 10 mm, -Y 10 mm`)으로 이동
+
+- **목표 / 배경**: 사용자 요청에 따라 높이(`Z=-12.0 mm`)는 유지하고, 파지 중심을 꼭짓점 쪽(`+X, -Y` 대각선 `~14 mm`)으로 더 이동해 얇은 빈 귀퉁이 끝을 잡도록 미세 조정.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_corner_x_offset_mm: 62.0 → 72.0`, `vertical_edge_offset_mm: 101.0 → 111.0`.
+
+---
+
+## 2026-11-28 11:00 — 포스틱 수직 45° 인형뽑기 넘기기 `J4` 부호 반전(`ry=-120°`) 및 닫힘 시 바닥 충돌 방지(`Z=-5.0`)
+
+- **목표 / 배경**: RG2 4절 링크 구조상 `70 → 0 mm` 닫힐 때 손가락 끝이 약 `12 mm` 아래로 뻗어 `Z=-12 mm`에서 바닥에 닿는 현상을 해결하기 위해 파지 높이를 `Z=-5.0 mm`로 `+7 mm` 상향하고, 넘기기 `J4` 부호를 반대 방향(`vertical_fwd_tilt_sign: 1 → -1`, `ry=-120°`, `J4=-36.6°`, 실기 M0609 IK/FK 검증 완료)으로 반전.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick.vertical_fwd_tilt_sign: 1 → -1`.
+
+---
+
+## 2026-11-28 11:07 — 포스틱 수직 45° 파지점 바깥쪽(`+X 10, -Y 10 mm`) 이동 및 들기 높이 하향(`Z_mid=290, Z_end=140`)
+
+- **목표 / 배경**: `Z=+15.0 mm` 안전 파지 확인 후, 파지점을 꼭짓점 바깥쪽으로 `1.4 cm` 더 빼고 들어 올리는 높이를 약 `5 cm` 낮춤.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_corner_x_offset_mm: 72→82`, `vertical_edge_offset_mm: 111→121`, `vertical_lift_delta_mm: 172→145`, `vertical_mid_z_delta_mm: 327→275`, `vertical_release_z_delta_mm: 162→125`.
+
+---
+
+## 2026-11-28 11:10 — 포스틱 45° 인형뽑기 두 손가락 수평 유지 + 팔 각도 `30°` 눕혀 진입(`[-45, -150, -90]`) 적용
+
+- **목표 / 배경**: 수직(0°) 인형뽑기 대신 두 손가락의 45° 대각선 수평 배치(`toolX=[-0.707, -0.707, 0.0]`, 두 손가락 높이 동일)는 그대로 유지하면서 로봇팔 각도만 `30°` 바닥 쪽으로 눕혀 진입(`[-45, -150, -90]`, 실기 M0609 IK 전 단계 검증 완료: `J4=8.1°, J5=94.3°, J6=-75.4°`).
+- **세부 변경 내역**: `config/products_catalog.yaml` (`vertical_back_tilt_deg: 0.0 → 30.0`), `executor_node.py` (`back_gamma = -90.0 + j6_off`).
+
+---
+
+## 2026-11-28 11:15 — 포스틱 30° 기울기 파지점 안쪽(`-X 7, +Y 7 mm`) 미세 보정 (`Z=-3.0` 테스트)
+
+- **목표 / 배경**: 30° 기울기 45° 인형뽑기 파지 시 약간 안쪽(`10 mm` 대각선)으로 당겨 `Z=15.0 - 18.0 = -3.0 mm`로 테스트.
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_corner_x_offset_mm: 82→75`, `vertical_edge_offset_mm: 121→114`.
+
+---
+
+## 2026-11-28 11:22 — 포스틱 45° 수평 두 손가락 유지 + 진입 팔 각도 `30° → 50°` 상향 (`Z_app=125 mm` IK 검증)
+
+- **목표 / 배경**: 사용자 요청에 따라 `Z=15.0 mm` 바닥 안전 높이를 유지하면서 팔 각도만 `30° → 50°`(`[-45, -130, -90]`)로 바닥 쪽에 더 붙여 진입하도록 수정. 실기 M0609 `ikin` 검증 결과 `Z_app=160 mm`는 `J5>130°` 불가, `Z_app=125 mm`(`lift_delta=110.0`)에서 전 단계 안전 통과(`J4=11.7°, J5=112.7~125.8°, J6=-76.6°`).
+- **세부 변경 내역**: `config/products_catalog.yaml`의 `postick`: `vertical_back_tilt_deg: 30.0 → 50.0`, `vertical_lift_delta_mm: 145.0 → 110.0`.
+
+---
+
+## 2026-11-28 11:30 — 포스틱(`postick_front`) 180° 뒤집기 확정본 테스트 226개 통과, Codex 리뷰 반영 및 `main` 커밋·푸시
+
+- **목표 / 배경**: 실기 M0609 + RG2에서 안정적으로 성공 확정된 포스틱 180° 뒤집기(`45°` 대각선 수평 두 손가락 + `50°` 팔 기울기 진입 `[-45, -130, -90]`, `open 70 / grasp 0 / 18 N`, `Z_app=125`, `Z_mid=290`, `J4=-36.6° / ry=-120°` `+Y` 넘기기)와 확정 YOLO 클래스 별칭(`aliases`)을 단위 테스트·크로스모델 리뷰까지 완료해 `origin/main`에 안전 백업함.
+- **담당 에이전트**:
+  - **Codex (`codex exec -s workspace-write` & `codex exec review --uncommitted`)**: `test_grasp_planner.py`, `test_reorient_motion.py`, `test_executor_dry_run.py` 226개 테스트 동기화·확충 및 코드 리뷰 수행(P1 0건, `[P2]` `MockRobot` 슬라이드 진입 경계 검증 일치 · `[P3]` 수직 파지 `j6_off` 반영 지적).
+  - **Antigravity**: Codex 리뷰 `[P2]`/`[P3]` 수정, `colcon build` + CycloneDDS 전체 `pytest` 226/226 최종 검증 및 `origin/main` 커밋·푸시.
+- **시행착오 및 해결 내역 (포스틱 최적화 최종 요약)**:
+  - 몸통 핀치 시 질소 압력으로 파손 우려 → 빈 왼쪽 하단 꼭짓점으로 전환.
+  - 기울인 채 `J6=90°` 옆면 ㄷ자 진입은 아래쪽 손가락 처짐(테이블 충돌)과 오목/볼록 귀퉁이 높이 편차(`2~3 cm`)에 민감 → 두 손가락을 45° 대각선 수평(`toolX Z=0`)으로 꼭짓점 양옆 빈 공간에 내리는 인형뽑기 방식으로 전환.
+  - RG2 4절 링크가 `70 → 0 mm`로 완전히 닫힐 때 손가락 끝이 아래로 `~20~25 mm` 뻗어 `Z=-12/-5/-3 mm`에서 바닥에 닿음 → `Z=+15.0 mm` 안전 높이 확보 후 팔 각도만 `50°` 눕혀(`[-45, -130, -90]`, `Z_app=125 mm` IK 검증) + `J4=-36.6°(ry=-120°)` `+Y` 넘기기로 안정적 180° 반전 확정.
+- **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **226 passed**, `git diff --check` 통과.
+- **후속 조치**: 포스틱 일반 이동(`pick_place`) 확인 → 음료(`drink_front`) 실측·테스트 → `product_back` 안전 폴백 및 `zones.flip_zone` 실측 반영.

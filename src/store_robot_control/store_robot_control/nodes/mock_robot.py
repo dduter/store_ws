@@ -1,6 +1,6 @@
 import os
 from secrets import compare_digest
-from math import isfinite
+from math import cos, isfinite, radians, sin
 from pathlib import Path
 from threading import Condition
 from time import monotonic
@@ -179,22 +179,70 @@ class MockRobot(Node):
             target = self._checked_pose(target)
         if action == "reorient":
             if grasp_plan.reorient_mode == "back_tilt_vertical_flip":
-                return plan_back_tilt_vertical_flip(
+                waypoints = plan_back_tilt_vertical_flip(
                     target, self._j6, guard,
                     edge_offset_mm=(
                         grasp_plan.vertical_edge_offset_mm
                         if grasp_plan.vertical_edge_offset_mm is not None
                         else self._reorient.get("vertical_edge_offset_mm", 65.0)
                     ),
+                    corner_x_offset_mm=grasp_plan.vertical_corner_x_offset_mm,
+                    entry_axis=grasp_plan.vertical_entry_axis,
                     mid_y_offset_mm=self._reorient.get("vertical_mid_y_offset_mm", 0.0),
-                    sweep_y_mm=self._reorient.get("vertical_sweep_y_mm", 145.0),
-                    back_tilt_deg=self._reorient.get("back_tilt_deg", 30.0),
+                    sweep_y_mm=(
+                        grasp_plan.vertical_sweep_mm
+                        if grasp_plan.vertical_sweep_mm is not None
+                        else self._reorient.get("vertical_sweep_y_mm", 145.0)
+                    ),
+                    back_tilt_deg=(
+                        grasp_plan.vertical_back_tilt_deg
+                        if grasp_plan.vertical_back_tilt_deg is not None
+                        else self._reorient.get("back_tilt_deg", 30.0)
+                    ),
                     mid_tilt_deg=self._reorient.get("vertical_mid_tilt_deg", 0.0),
-                    fwd_tilt_deg=self._reorient.get("vertical_fwd_tilt_deg", 45.0),
-                    lift_delta_mm=self._reorient.get("vertical_lift_delta_mm", 165.0),
-                    mid_z_delta_mm=self._reorient.get("vertical_mid_z_delta_mm", 145.0),
-                    release_z_delta_mm=self._reorient.get("vertical_release_z_delta_mm", 115.0),
+                    fwd_tilt_deg=(
+                        grasp_plan.vertical_fwd_tilt_deg
+                        if grasp_plan.vertical_fwd_tilt_deg is not None
+                        else self._reorient.get("vertical_fwd_tilt_deg", 45.0)
+                    ),
+                    lift_delta_mm=(
+                        grasp_plan.vertical_lift_delta_mm
+                        if grasp_plan.vertical_lift_delta_mm is not None
+                        else self._reorient.get("vertical_lift_delta_mm", 165.0)
+                    ),
+                    mid_z_delta_mm=(
+                        grasp_plan.vertical_mid_z_delta_mm
+                        if grasp_plan.vertical_mid_z_delta_mm is not None
+                        else self._reorient.get("vertical_mid_z_delta_mm", 145.0)
+                    ),
+                    release_z_delta_mm=(
+                        grasp_plan.vertical_release_z_delta_mm
+                        if grasp_plan.vertical_release_z_delta_mm is not None
+                        else self._reorient.get("vertical_release_z_delta_mm", 115.0)
+                    ),
                 )
+                slide_in = grasp_plan.vertical_slide_in_y_mm
+                if slide_in > 0.0:
+                    approach, descend = waypoints[0], waypoints[1]
+                    rz = approach.pose[3]
+                    if grasp_plan.vertical_entry_axis == "x":
+                        x_rx = (grasp_plan.vertical_entry_yaw_deg - rz + 180.0) % 360.0 - 180.0
+                        slide_rad = radians(x_rx)
+                        out_x = descend.pose[0] + slide_in * cos(slide_rad)
+                        out_y = descend.pose[1] + slide_in * sin(slide_rad)
+                    else:
+                        rz_rad = radians(rz)
+                        out_x = descend.pose[0] - slide_in * sin(rz_rad)
+                        out_y = descend.pose[1] - slide_in * cos(rz_rad)
+                    out_app = self._checked_pose([out_x, out_y, approach.pose[2], rz])
+                    out_pre = self._checked_pose([out_x, out_y, descend.pose[2], rz])
+                    return [
+                        MotionWaypoint(approach.stage, out_app, self._j6),
+                        MotionWaypoint("descend_outside", out_pre, self._j6),
+                        MotionWaypoint("slide_in_grasp", descend.pose, self._j6),
+                        *waypoints[2:],
+                    ]
+                return waypoints
             if grasp_plan.reorient_mode == "edge_pivot_flip":
                 try:
                     return plan_edge_pivot_flip(

@@ -282,7 +282,9 @@ def plan_edge_pivot_flip(target_pose, current_j5_deg: float, current_j6_deg: flo
 
 def plan_back_tilt_vertical_flip(
     target_pose, current_j6_deg: float, safety_guard: SafetyGuard, *,
-    edge_offset_mm: float = 65.0, mid_y_offset_mm: float = 0.0, sweep_y_mm: float = 145.0,
+    edge_offset_mm: float = 65.0, corner_x_offset_mm: float = 0.0,
+    entry_axis: str = "y",
+    mid_y_offset_mm: float = 0.0, sweep_y_mm: float = 145.0,
     back_tilt_deg: float = 30.0, mid_tilt_deg: float = 0.0, fwd_tilt_deg: float = 45.0,
     lift_delta_mm: float = 165.0, mid_z_delta_mm: float = 145.0,
     release_z_delta_mm: float = 115.0,
@@ -294,10 +296,11 @@ def plan_back_tilt_vertical_flip(
 
     distances = (edge_offset_mm, lift_delta_mm, mid_z_delta_mm, release_z_delta_mm)
     angles = (back_tilt_deg, mid_tilt_deg, fwd_tilt_deg)
-    if (not all(map(isfinite, (*distances, mid_y_offset_mm, sweep_y_mm, *angles)))
+    if (not all(map(isfinite, (*distances, corner_x_offset_mm, mid_y_offset_mm, sweep_y_mm, *angles)))
+            or entry_axis not in ("x", "y")
             or min(distances) <= 0
             or sweep_y_mm < 0
-            or not 15.0 <= back_tilt_deg <= 55.0
+            or not 0.0 <= back_tilt_deg <= 75.0
             or not 0.0 <= mid_tilt_deg <= 60.0
             or not 20.0 <= fwd_tilt_deg <= 95.0):
         raise ReorientPlanningError("INVALID_POSE", "상하 반전의 기울기 또는 거리 설정이 유효하지 않습니다.")
@@ -307,18 +310,29 @@ def plan_back_tilt_vertical_flip(
     x, y, target_z, rz = check.clamped_pose
     if abs(rz) > 30.0:
         raise ReorientPlanningError("INVALID_POSE", "상하 반전은 상품 정렬 각도 |rz| <= 30도 범위에서만 지원합니다.")
-    # Doosan 하향 ZYZ [0, 180, rz]의 공구 Y축 (+sin(rz), +cos(rz))을 따라 -Y 끝단 파지 -> +Y 지렛대 넘기기를 계획합니다.
+    # Doosan 하향 ZYZ [0, 180, rz]의 공구 축 기준으로 진입·넘기기 궤적을 계획합니다.
     rz_rad = radians(rz)
-    gx = x - edge_offset_mm * sin(rz_rad)
-    gy = y - edge_offset_mm * cos(rz_rad)
-    mx = x + mid_y_offset_mm * sin(rz_rad)
-    my = y + mid_y_offset_mm * cos(rz_rad)
-    ex = mx + sweep_y_mm * sin(rz_rad)
-    ey = my + sweep_y_mm * cos(rz_rad)
+    cx = x + corner_x_offset_mm * cos(rz_rad)
+    cy = y - corner_x_offset_mm * sin(rz_rad)
+    gx = cx - edge_offset_mm * sin(rz_rad)
+    gy = cy - edge_offset_mm * cos(rz_rad)
+    if entry_axis == "x":
+        # 앞쪽(+X) 파지 후 제자리 위(Y=-40, Z=315)로 높이 든 뒤, 반대 J4 각도(ry=+120°)로 +Y 빈 공간 쪽으로 넘깁니다.
+        mid_shift_y = -28.5
+        mx = cx + mid_shift_y * sin(rz_rad)
+        my = cy + mid_shift_y * cos(rz_rad)
+        ex = mx + sweep_y_mm * sin(rz_rad)
+        ey = my + sweep_y_mm * cos(rz_rad)
+    else:
+        mx = cx + mid_y_offset_mm * sin(rz_rad)
+        my = cy + mid_y_offset_mm * cos(rz_rad)
+        ex = mx + sweep_y_mm * sin(rz_rad)
+        ey = my + sweep_y_mm * cos(rz_rad)
     z_grasp = max(guard.z_min_mm, target_z)
     transit_z = guard.safe_transit_z(z_grasp)
     z_max = guard.bounds["z_max"]
-    lift_z = min(z_max, max(160.0, z_grasp + lift_delta_mm))
+    min_lift_z = 90.0 if entry_axis == "x" else 160.0
+    lift_z = min(z_max, max(min_lift_z, z_grasp + lift_delta_mm))
     mid_z = min(z_max, max(130.0, z_grasp + mid_z_delta_mm))
     end_z = min(mid_z, max(75.0, z_grasp + release_z_delta_mm))
     if lift_z <= z_grasp or mid_z <= end_z:

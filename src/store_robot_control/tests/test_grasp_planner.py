@@ -95,9 +95,28 @@ def test_measured_product_overrides(planner):
 
     postick = planner.plan_grasp("postick")
     assert postick.category == "postick"
-    assert (postick.open_width_mm, postick.grasp_width_mm, postick.grasp_force_n) == (110.0, 20.0, 12.0)
-    assert postick.reorient_mode == "edge_pivot_flip"
-    assert postick.vertical_edge_offset_mm is None
+    assert (postick.open_width_mm, postick.grasp_width_mm, postick.grasp_force_n) == (70.0, 0.0, 18.0)
+    assert postick.reorient_mode == "back_tilt_vertical_flip"
+    assert postick.vertical_entry_axis == "x"
+    assert postick.vertical_entry_yaw_deg == -45.0
+    assert postick.vertical_edge_offset_mm == 114.0
+    assert postick.vertical_corner_x_offset_mm == 75.0
+    assert postick.vertical_back_tilt_deg == 50.0
+    assert postick.vertical_fwd_tilt_deg == 60.0
+    assert postick.vertical_sweep_mm == 180.0
+    assert postick.vertical_tilt_sign == -1
+    assert postick.vertical_fwd_tilt_sign == -1
+    assert postick.vertical_lift_delta_mm == 110.0
+    assert postick.vertical_mid_z_delta_mm == 275.0
+    assert postick.vertical_release_z_delta_mm == 125.0
+
+    # 확정 YOLO 클래스명 별칭 호환 확인
+    assert planner.plan_grasp("pepero_almond_front") == pepero
+    assert planner.plan_grasp("postick_front") == postick
+    drink = planner.plan_grasp("drink_front")
+    assert drink.category == "drink"
+    assert drink.reorient_mode == "in_place_yaw_180"
+    assert planner.plan_grasp("ciga") == planner.plan_grasp("cigarette_mock")
 
 
 @pytest.mark.parametrize("offset", [0, -1, float("nan"), float("inf"), "invalid"])
@@ -105,3 +124,23 @@ def test_invalid_vertical_edge_offset(planner, monkeypatch, offset):
     monkeypatch.setitem(planner.products["pepero_almond"], "vertical_edge_offset_mm", offset)
     with pytest.raises(ValueError, match="vertical_edge_offset_mm"):
         planner.plan_grasp("pepero_almond")
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("vertical_entry_axis", "z"),
+    ("vertical_entry_yaw_deg", -91.0),
+    ("vertical_entry_yaw_deg", 91.0),
+    ("vertical_tilt_sign", 0),
+    ("vertical_fwd_tilt_sign", 2),
+    ("vertical_slide_in_y_mm", -1.0),
+    ("vertical_back_tilt_deg", -1.0),
+])
+def test_invalid_vertical_flip_setting(planner, monkeypatch, field, value):
+    monkeypatch.setitem(planner.products["postick"], field, value)
+    with pytest.raises(ValueError, match=field):
+        planner.plan_grasp("postick_front")
+
+
+def test_zero_vertical_back_tilt_is_allowed(planner, monkeypatch):
+    monkeypatch.setitem(planner.products["postick"], "vertical_back_tilt_deg", 0.0)
+    assert planner.plan_grasp("postick_front").vertical_back_tilt_deg == 0.0

@@ -73,10 +73,40 @@ products:
     grasp_width_mm: 84.0
     grasp_force_n: 3.0
     grasp_depth_offset_mm: 15.0
-  # 실측: 가로 150 mm(추정) x 세로 225~235 mm (RG2 최대 폭 110 mm이므로 세워 잡기/중앙·모서리 집기 기준, 두께 실측 후 보정)
+  # 실측: 가로 150 mm(±X) x 세로 230 mm(±Y) (실물 180° 반전 확정값: 45° 수평 두 손가락 + 50° 팔 기울기 파지 -> Z=290 들기 -> J4(-36.6°, ry=-120°) +Y 넘기기)
   postick:
     category: "snack_bag"
-    open_width_mm: 110.0
-    grasp_width_mm: 20.0
-    grasp_force_n: 12.0
+    reorient_mode: "back_tilt_vertical_flip"
+    vertical_entry_axis: "x"
+    vertical_entry_yaw_deg: -45.0
+    vertical_edge_offset_mm: 114.0
+    vertical_corner_x_offset_mm: 75.0
+    vertical_slide_in_y_mm: 0.0
+    vertical_back_tilt_deg: 50.0
+    vertical_fwd_tilt_deg: 60.0
+    vertical_sweep_mm: 180.0
+    vertical_tilt_sign: -1
+    vertical_fwd_tilt_sign: -1
+    vertical_j6_offset_deg: 0.0
+    vertical_lift_delta_mm: 110.0
+    vertical_mid_z_delta_mm: 275.0
+    vertical_release_z_delta_mm: 125.0
+    open_width_mm: 70.0
+    grasp_width_mm: 0.0
+    grasp_force_n: 18.0
+    grasp_depth_offset_mm: 15.0
+  # 알로에농장 등 원통 음료 (변경 가능, 실측 후 지름/힘 보정 예정)
+  drink:
+    category: "paper_box"
+    reorient_mode: "in_place_yaw_180"
+    open_width_mm: 95.0
+    grasp_width_mm: 45.0
+    grasp_force_n: 30.0
     grasp_depth_offset_mm: 25.0
+
+# 비전 YOLO 확정 클래스명 <-> 카탈로그 정규 키 별칭 매핑
+aliases:
+  pepero_almond_front: "pepero_almond"
+  postick_front: "postick"
+  drink_front: "drink"
+  ciga: "cigarette_mock"

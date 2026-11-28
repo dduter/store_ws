@@ -800,6 +800,50 @@ def test_back_tilt_vertical_flip_execution(node, monkeypatch, grip_detected, edg
         assert commands[6:] == [("open", 108.0, 3.0)]
 
 
+def test_postick_front_vertical_flip_execution(node, monkeypatch):
+    ik_poses, gripper_commands = [], []
+
+    def solve(pose, reference, **kwargs):
+        ik_poses.append(pose)
+        return reference
+
+    monkeypatch.setattr(node._robot, "solve_continuous_ik", solve)
+    monkeypatch.setattr(node._gripper, "open_mm", lambda *args: gripper_commands.append(("open", *args)))
+    monkeypatch.setattr(node._gripper, "move_mm", lambda *args: gripper_commands.append(("grasp", *args)))
+    monkeypatch.setattr(node._gripper, "is_grip_detected", lambda: True)
+
+    handle = GoalHandle("reorient", category="postick_front")
+    assert run_goal(node, handle).success
+    assert handle.feedback == [
+        "open_gripper", "approach_back", "descend_back", "grasp", "lift_back",
+        "mid_upright", "flip_over", "release_flip", "lift_after_flip", "retreat",
+    ]
+    assert [pose[3:] for pose in ik_poses] == [
+        [-45.0, -130.0, -90.0], [-45.0, -130.0, -90.0],
+        [0.0, 180.0, 0.0], [90.0, -120.0, 90.0], [0.0, 180.0, 0.0],
+    ]
+    assert gripper_commands == [("open", 70.0, 18.0), ("grasp", 0.0, 18.0), ("open", 70.0, 18.0)]
+
+
+def test_postick_front_vertical_flip_slides_in_after_outside_descent(node, monkeypatch):
+    monkeypatch.setitem(node._grasp.products["postick"], "vertical_slide_in_y_mm", 20.0)
+    handle = GoalHandle("reorient", category="postick_front")
+    progress = []
+    publish_feedback = handle.publish_feedback
+
+    def record_feedback(feedback):
+        publish_feedback(feedback)
+        progress.append(feedback.progress)
+
+    monkeypatch.setattr(handle, "publish_feedback", record_feedback)
+    assert run_goal(node, handle).success
+    assert handle.feedback == [
+        "open_gripper", "approach_back", "descend_outside", "slide_in_grasp", "grasp",
+        "lift_back", "mid_upright", "flip_over", "release_flip", "lift_after_flip", "retreat",
+    ]
+    assert progress == pytest.approx([step / 11 for step in range(1, 12)])
+
+
 @pytest.mark.parametrize(("failure", "code"), [
     ("ik", "OUT_OF_REACH"),
     ("path_missing", "OUT_OF_REACH"),
@@ -870,7 +914,7 @@ def test_back_tilt_vertical_flip_checks_approach_arc_before_first_movej(node, mo
     assert handle.feedback == ["open_gripper", "approach_back"]
 
 
-def test_mock_robot_supports_pepero_back_tilt_vertical_flip(tmp_path, monkeypatch):
+def test_mock_robot_supports_product_back_tilt_vertical_flip(tmp_path, monkeypatch):
     from store_robot_control.nodes.mock_robot import MockRobot
 
     monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path))
@@ -890,6 +934,15 @@ def test_mock_robot_supports_pepero_back_tilt_vertical_flip(tmp_path, monkeypatc
         assert result.error_code == "OK"
         assert handle.feedback[0] == "approach_back"
         assert handle.feedback[-1] == "retreat"
+
+        postick = GoalHandle("reorient", category="postick_front")
+        postick_result = run_goal(mock, postick)
+        assert postick_result.success
+        assert postick_result.error_code == "OK"
+        assert postick.feedback == [
+            "approach_back", "descend_back", "grasp", "lift_back", "mid_upright",
+            "flip_over", "release_flip", "lift_after_flip", "retreat",
+        ]
 
         # apply_grasp_depth_offset=True 일관성: target Z=290 -> 보정 Z=275로 실행기와 동일하게 통과
         high_handle = GoalHandle("reorient", target=[300.0, 0.0, 290.0, 0.0], category="pepero_almond")

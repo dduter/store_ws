@@ -226,6 +226,20 @@ def test_back_tilt_vertical_flip_plan(guard):
     assert rotated[5].pose[:2] == pytest.approx([411.279650, 151.414630], abs=1e-3)
 
 
+@pytest.mark.parametrize(("lift_delta_mm", "lift_z"), [(110.0, 150.0), (20.0, 90.0)])
+def test_postick_x_entry_vertical_flip_plan(guard, lift_delta_mm, lift_z):
+    points = plan_back_tilt_vertical_flip(
+        [350, 20, 40, 0], 0, guard, entry_axis="x",
+        corner_x_offset_mm=75.0, edge_offset_mm=114.0, back_tilt_deg=50.0,
+        fwd_tilt_deg=60.0, lift_delta_mm=lift_delta_mm, mid_z_delta_mm=275.0,
+        release_z_delta_mm=125.0, sweep_y_mm=180.0,
+    )
+    poses = {point.stage: point.pose for point in points}
+    assert poses["approach_back"] == poses["lift_back"] == pytest.approx([425, -94, lift_z, 0])
+    assert poses["mid_upright"] == pytest.approx([425, -8.5, 315, 0])
+    assert poses["flip_over"] == pytest.approx([425, 171.5, 165, 0])
+
+
 @pytest.mark.parametrize(("target", "j6", "params", "code"), [
     ([721, 0, 40, 0], 0, {}, "OUT_OF_REACH"),
     ([350, -390, 40, 0], 0, {}, "OUT_OF_REACH"),
@@ -236,7 +250,9 @@ def test_back_tilt_vertical_flip_plan(guard):
     ([350, 0, 40, 90], 0, {}, "INVALID_POSE"),
     ([350, 0, 40, -35], 0, {}, "INVALID_POSE"),
     ([350, 0, 40, 0], 151, {}, "J6_LIMIT_VIOLATION"),
-    ([350, 0, 40, 0], 0, {"back_tilt_deg": 14.0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"back_tilt_deg": -1.0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"back_tilt_deg": 76.0}, "INVALID_POSE"),
+    ([350, 0, 40, 0], 0, {"entry_axis": "z"}, "INVALID_POSE"),
     ([350, 0, 40, 0], 0, {"fwd_tilt_deg": 19.0}, "INVALID_POSE"),
     ([350, 0, 40, 0], 0, {"mid_tilt_deg": 61}, "INVALID_POSE"),
     ([350, 0, 40, 0], 0, {"fwd_tilt_deg": 96}, "INVALID_POSE"),

@@ -1,4 +1,4 @@
-from math import hypot, isfinite
+from math import cos, hypot, isfinite, radians, sin
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
@@ -561,6 +561,20 @@ class ExecutorNode(Node):
         params = dict(self._vertical_flip_params)
         if grasp.vertical_edge_offset_mm is not None:
             params["edge_offset_mm"] = grasp.vertical_edge_offset_mm
+        if grasp.vertical_back_tilt_deg is not None:
+            params["back_tilt_deg"] = grasp.vertical_back_tilt_deg
+        if grasp.vertical_fwd_tilt_deg is not None:
+            params["fwd_tilt_deg"] = grasp.vertical_fwd_tilt_deg
+        if grasp.vertical_sweep_mm is not None:
+            params["sweep_y_mm"] = grasp.vertical_sweep_mm
+        if grasp.vertical_lift_delta_mm is not None:
+            params["lift_delta_mm"] = grasp.vertical_lift_delta_mm
+        if grasp.vertical_mid_z_delta_mm is not None:
+            params["mid_z_delta_mm"] = grasp.vertical_mid_z_delta_mm
+        if grasp.vertical_release_z_delta_mm is not None:
+            params["release_z_delta_mm"] = grasp.vertical_release_z_delta_mm
+        params["corner_x_offset_mm"] = grasp.vertical_corner_x_offset_mm
+        params["entry_axis"] = grasp.vertical_entry_axis
         approach, descend, grip, lift, mid, flip, release, reverse, retreat = (
             plan_back_tilt_vertical_flip(target, cur_joints[5], self._guard, **params)
         )
@@ -577,36 +591,82 @@ class ExecutorNode(Node):
             return joints
 
         rz = approach.pose[3]
-        # ZYZ [90 - rz, -(180 - tilt), 90]은 tilt->0에서 [0, 180, rz]와 연속이며 공구 -Y 방향으로 기울어집니다.
+        entry_axis = grasp.vertical_entry_axis
+        sign = grasp.vertical_tilt_sign
+        fwd_sign = sign if grasp.vertical_fwd_tilt_sign is None else grasp.vertical_fwd_tilt_sign
+        j6_off = grasp.vertical_j6_offset_deg
+        # ZYZ [90 - rz, sign * (180 - tilt), 90 + j6_off]은 tilt->0에서 [0, 180, rz + j6_off]와 연속입니다.
         tilt_rx = (90.0 - rz + 180.0) % 360.0 - 180.0
-        back_orientation = [tilt_rx, -(180.0 - params["back_tilt_deg"]), 90.0]
+        tilt_gamma = (90.0 + j6_off + 180.0) % 360.0 - 180.0
+        mid_rz = (rz + j6_off + 180.0) % 360.0 - 180.0
+        if entry_axis == "x":
+            x_rx = (grasp.vertical_entry_yaw_deg - rz + 180.0) % 360.0 - 180.0
+            if abs(params["back_tilt_deg"]) < 1e-6:
+                # 수직(0°) 인형뽑기 진입: J6만 entry_yaw + j6_off 회전시켜 두 손가락이 꼭짓점 양옆 빈 공간으로 하강합니다.
+                back_rz = (rz + grasp.vertical_entry_yaw_deg + j6_off + 180.0) % 360.0 - 180.0
+                back_orientation = [0.0, 180.0, back_rz]
+            else:
+                # 45° 대각선 두 손가락 수평 유지(toolX Z=0) + 팔 각도만 back_tilt_deg(예: 30°) 눕혀 진입합니다.
+                back_gamma = (-90.0 + j6_off + 180.0) % 360.0 - 180.0
+                back_orientation = [x_rx, sign * (180.0 - params["back_tilt_deg"]), back_gamma]
+            fwd_orientation = [tilt_rx, fwd_sign * (180.0 - params["fwd_tilt_deg"]), tilt_gamma]
+        else:
+            back_orientation = [tilt_rx, sign * (180.0 - params["back_tilt_deg"]), tilt_gamma]
+            fwd_orientation = [tilt_rx, fwd_sign * (180.0 - params["fwd_tilt_deg"]), tilt_gamma]
         mid_tilt = params["mid_tilt_deg"]
         mid_orientation = (
-            [0.0, 180.0, rz] if abs(mid_tilt) < 1e-6 else [tilt_rx, -(180.0 - mid_tilt), 90.0]
+            [0.0, 180.0, mid_rz] if abs(mid_tilt) < 1e-6 else [tilt_rx, sign * (180.0 - mid_tilt), tilt_gamma]
         )
-        fwd_orientation = [tilt_rx, -(180.0 - params["fwd_tilt_deg"]), 90.0]
         app_6d = [*approach.pose[:3], *back_orientation]
         grp_6d = [*descend.pose[:3], *back_orientation]
         mid_6d = [*mid.pose[:3], *mid_orientation]
         end_6d = [*flip.pose[:3], *fwd_orientation]
         retreat_6d = [*retreat.pose[:3], 0.0, 180.0, rz]
 
-        init_deltas = (180.0, 120.0, 120.0, 65.0, 120.0, 180.0)
-        roll_deltas = (95.0, 90.0, 95.0, 65.0, 65.0, 110.0)
-        j_app = solve(app_6d, cur_joints, max_joint_deltas=init_deltas)
-        j_grp = solve(grp_6d, j_app)
-        j_mid = solve(mid_6d, j_app, max_joint_deltas=roll_deltas)
-        j_end = solve(end_6d, j_mid, max_joint_deltas=roll_deltas)
-        j_retreat = solve(retreat_6d, j_mid, max_joint_deltas=roll_deltas)
+        init_deltas = (180.0, 120.0, 120.0, 85.0, 120.0, 180.0)
+        roll_deltas = (95.0, 90.0, 95.0, 85.0, 65.0, 110.0)
+        slide_in = grasp.vertical_slide_in_y_mm
+        if slide_in > 0.0:
+            # 옆에서 봤을 때 ㄷ자 진입: entry_axis='x'면 진입 각도(x_rx) 반대 바깥에서 대각선/정면 슬라이드 진입
+            rz_rad = radians(rz)
+            if entry_axis == "x":
+                slide_rad = radians(x_rx)
+                out_x = descend.pose[0] + slide_in * cos(slide_rad)
+                out_y = descend.pose[1] + slide_in * sin(slide_rad)
+            else:
+                out_x = descend.pose[0] - slide_in * sin(rz_rad)
+                out_y = descend.pose[1] - slide_in * cos(rz_rad)
+            out_app_pose = self._checked_pose([out_x, out_y, approach.pose[2], rz])
+            out_pre_pose = self._checked_pose([out_x, out_y, descend.pose[2], rz])
+            out_app_6d = [*out_app_pose[:3], *back_orientation]
+            out_pre_6d = [*out_pre_pose[:3], *back_orientation]
+            j_out_app = solve(out_app_6d, cur_joints, max_joint_deltas=init_deltas)
+            j_out_pre = solve(out_pre_6d, j_out_app)
+            j_grp = solve(grp_6d, j_out_pre)
+            j_lift = solve(app_6d, j_grp)
+            j_mid = solve(mid_6d, j_lift, max_joint_deltas=roll_deltas)
+            j_end = solve(end_6d, j_mid, max_joint_deltas=roll_deltas)
+            j_retreat = solve(retreat_6d, j_mid, max_joint_deltas=roll_deltas)
+            joint_set = (j_out_app, j_out_pre, j_grp, j_lift, j_mid, j_end, j_retreat)
+        else:
+            j_app = solve(app_6d, cur_joints, max_joint_deltas=init_deltas)
+            j_grp = solve(grp_6d, j_app)
+            j_mid = solve(mid_6d, j_app, max_joint_deltas=roll_deltas)
+            j_end = solve(end_6d, j_mid, max_joint_deltas=roll_deltas)
+            j_retreat = solve(retreat_6d, j_mid, max_joint_deltas=roll_deltas)
+            joint_set = (j_app, j_grp, j_mid, j_end, j_retreat)
 
-        if not all(
-            self._guard.check_j6_limit(joints[5])
-            for joints in (j_app, j_grp, j_mid, j_end, j_retreat)
-        ):
+        if not all(self._guard.check_j6_limit(joints[5]) for joints in joint_set):
             raise TaskFailure("J6_LIMIT_VIOLATION", True)
 
-        self._check_joint_path_fkin(j_app, j_grp)
-        self._check_joint_path_fkin(j_app, j_mid)
+        if slide_in > 0.0:
+            self._check_joint_path_fkin(j_out_app, j_out_pre)
+            self._check_joint_path_fkin(j_out_pre, j_grp)
+            self._check_joint_path_fkin(j_grp, j_lift)
+            self._check_joint_path_fkin(j_lift, j_mid)
+        else:
+            self._check_joint_path_fkin(j_app, j_grp)
+            self._check_joint_path_fkin(j_app, j_mid)
         self._check_joint_path_fkin(j_mid, j_end, fractions=(0.2, 0.4, 0.6, 0.8, 1.0))
         self._check_joint_path_fkin(j_mid, j_retreat)
 
@@ -619,6 +679,32 @@ class ExecutorNode(Node):
             robot.move_joint(joints, *speeds)
             if self._dry_run and sim_pose is not None:
                 robot.set_simulated_reference_pose(sim_pose)
+
+        if slide_in > 0.0:
+            def approach_outside():
+                self._raise_for_approach(
+                    handle, out_app_pose, lambda pose: self._move_linear_6d(handle, pose, *speeds),
+                    raise_at_same_xy=True,
+                )
+                self._check_interruption(handle)
+                self._check_joint_path_fkin(list(robot.get_current_joints()), j_out_app)
+                self._check_interruption(handle)
+                move_joint(j_out_app, out_app_6d)
+
+            total = 11
+            self._step(handle, "open_gripper", 1, total, self._gripper.open_mm, *open_args)
+            self._step(handle, approach.stage, 2, total, approach_outside)
+            self._step(handle, "descend_outside", 3, total, move_joint, j_out_pre, out_pre_6d)
+            self._step(handle, "slide_in_grasp", 4, total, move_joint, j_grp, grp_6d)
+            self._step(handle, grip.stage, 5, total, self._gripper.move_mm, *move_args)
+            self._verify_grasp(handle, grasp, j_lift, retreat=lambda joints: move_joint(joints, app_6d))
+            self._step(handle, lift.stage, 6, total, move_joint, j_lift, app_6d)
+            self._step(handle, mid.stage, 7, total, move_joint, j_mid, mid_6d)
+            self._step(handle, flip.stage, 8, total, move_joint, j_end, end_6d)
+            self._step(handle, release.stage, 9, total, self._gripper.open_mm, *open_args)
+            self._step(handle, reverse.stage, 10, total, move_joint, j_mid, mid_6d)
+            self._step(handle, retreat.stage, 11, total, move_joint, j_retreat, retreat_6d)
+            return
 
         def approach_back():
             self._raise_for_approach(
