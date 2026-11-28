@@ -1030,3 +1030,16 @@
   - `3.0 N`으로 `pick_place` 시 중력으로 빼빼로가 회전 → `grasp_force_n: 10.0` 실기 검증 후 `pick_grasp_force_n: 10.0` 옵션 분리 적용(`reorient` 3.0 N 100% 보존).
   - Codex 리뷰 `[P1]` 반영: `-135.0 mm` 완화 범위를 전체 하단 구역(`front_lower_boxes`)에서 실제 파지가 필요한 입고상자 내부(`inbound_box_pick`, `X[30, 430], Y[-640, -335]`)로만 좁혀 투하 전용 구역(구매상품·폐기통)의 불필요한 과하강을 차단.
 - **검증 결과**: `colcon build --symlink-install --packages-select store_robot_control` 성공, `pytest -q src/store_robot_control/tests` **273 passed**, `git diff --check` 통과, Codex 리뷰 `[P1]` 해결.
+
+
+---
+
+## 2026-11-28 14:41 — 빼빼로 실기 전 구간(`입고상자 → flip_zone → 구매상품 / 폐기통`) 검증 완료 및 `workspace_zones.yaml` 백업
+
+- **목표 / 배경**: 빼빼로(`pepero_almond_front`, `pick_grasp_force_n: 10.0 N`)로 입고상자(`Z=-130.0`) → 데스크 `flip_zone` → 구매상품 쇼핑백(`[-69.8, -477.4, -40.0]`) → 폐기통(`[520.0, -430.0, -10.0]`) 전 구간 실기 `pick_place`를 완료·확정하고 설정을 `origin/main`에 백업함.
+- **담당 에이전트**: Antigravity 실기 IK 분석·파라미터 튜닝·검증 및 백업.
+- **시행착오 및 해결 내역**:
+  - 초기 `safe_transit_z_mm: 260.0`에서는 폐기통 정중앙(`r=694 mm`) 도달 불가 → `[470, -360]` 코너로 당겼더니 빼빼로 상자가 코너에 걸려 낙하.
+  - `safe_transit_z_mm: 150.0`으로 `[520, -430]` 중앙 진입 성공했으나 `J3 ≈ 11°`(팔꿈치 특이점 근접)에서 `movel` 급가속 발생 → `safe_transit_z_mm: 125.0 mm`(`J3 ≈ 23°`, 포스틱 전용 `pick_transit_z_mm: 260.0` 무영향)으로 낮춰 급가속 완전 해소.
+  - 쇼핑백 투하 높이 `100 → 40 → -40.0 mm` 조정에 맞춰 `z_min_zones`에 `checkout_bag_drop(X[-160,20], Y[-620,-335], z_min:-55.0)` 추가, 폐기통 투하 높이도 `40 → -10.0 mm`로 조정해 실기 모두 양호 확정.
+- **검증 결과**: 실기 테스트 1·2·3 전 구간 성공, `pytest` **273 passed**, `git diff --check` 통과.
