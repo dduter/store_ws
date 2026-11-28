@@ -1118,3 +1118,34 @@
   - 실기 M0609 + RG2 + USB 웹캠(`/dev/video0`) XY/Z/그리퍼 원격 조작 검증 완료
   - `codex exec review --uncommitted` 완료 (`hand_client.py`/`test_remote_node.py` 결함 0건)
 - **후속 조치**: 웹 모니터링·원격 관제 대시보드(`src/store_web_ui`) 구현 및 라이브 검증 진행.
+
+
+---
+
+## 2026-11-28 16:46 — 웹 모니터링·원격 관제 대시보드(`src/store_web_ui`) 및 `store_bringup` 런치 연동 구현·리뷰·백업
+
+- **목표 / 배경**: 24시 무인편의점 협동로봇의 실시간 상태(모드, 노드 헬스, 재고·폐기 이력, OWL RL 지식 그래프, 에이전트 로그, Eye-in-Hand RealSense + 매장 웹캠 스트리밍)를 오프라인 LAN 브라우저에서 모니터링하고, 텍스트 명령·비상 정지·관리자 인증 원격 조그/그리퍼 조작까지 통합 제어할 수 있는 `src/store_web_ui` ROS 2 패키지와 `store_bringup` 런치 연동을 구현·백업함.
+- **담당 에이전트**:
+  - **Codex (`codex exec -s workspace-write` & `codex exec -s read-only`)**: `store_web_ui` 패키지 골격, 순수 Python `StateStore`/`FrameBuffer`/`ros_image_to_jpeg`, FastAPI/WebSocket/MJPEG 서버, `WebUiNode` ROS 2 브리지, 오프라인 다크모드 한국어 대시보드(`index.html`/`style.css`/`app.js`), `web_ui.launch.py`/`store_bot.launch.py` 연동, 단위 테스트 22건 구현 및 후속 보안·동시성 크로스모델 리뷰 수행.
+  - **Antigravity**: 전체 아키텍처·ROS 2 인터페이스 규약 설계, 전체 파일 감사 중 3건의 실기 연동 결함 발견·수정(`↑/↓` 조그 축 부호 반전, 그리퍼 단일 클릭의 `remote_node` `0.5s` 디바운스 미통과, 원격 비활성/단절 시 오탐 409 토스트), `setup.py` `exclude=["tests"]` 보완, Codex 2차 리뷰 `[P1]`/`[P2]` 4건 전건 반영(관리자 인증 `X-Remote-Token` 세션 바인딩, WebSocket 단절 시 진행 중 이동 즉시 `stop: true` 전송, 그리퍼 버스트 세대 카운터+`inFlight` 직렬화, 키 검증 타임아웃 안내 명확화), 라이브 ROS 2 + HTTP E2E 검증, 최종 빌드·테스트·Git 백업.
+- **시행착오 및 해결 내역**:
+  - **조그 패드 Y축 부호 불일치**: 초기 `index.html`의 `↑` 버튼이 `data-vector="0,-1,0"`, `↓` 버튼이 `0,1,0`으로 되어 있어 `hand_client.py`(`W=(0,1,0)`, `S=(0,-1,0)`)와 상하가 반대였음 → `↑="0,1,0"`, `↓="0,-1,0"`으로 통일하고 단위 테스트에 검증 추가.
+  - **그리퍼 단발 클릭 무반응 위험**: `remote_node.py`는 `gripper_debounce_sec: 0.5s` / `watchdog_timeout_sec: 0.5s`를 사용하므로 단일 HTTP POST만 보내면 디바운스 통과 전 워치독이 리셋됨 → 웹 UI 열기/닫기 클릭 시 `100ms` 간격 `7회(600ms)` 연속 전송(세대 카운터 `gripperGen` + `gripperInFlight` 직렬화로 연타/반대 클릭 충돌 차단)으로 해결.
+  - **LAN 타 브라우저 무인증 원격 조작 차단 (`[P1]`)**: 전역 `remote_override`만으로 `/api/remote/hand_cmd`를 허용하면 동일 LAN의 미인증 클라이언트가 조작할 수 있음 → `/api/remote/verify` 성공 시 세션 토큰(`remote_token`)을 발급하고 `/api/remote/hand_cmd`에서 `X-Remote-Token` 상수시간 비교(`secrets.compare_digest`)로 검증하도록 강화 (`remote_override=false` 시 자동 무효화, 비상 정지는 즉시성 보장을 위해 비인증 유지).
+  - **패키징 안전성**: `setup.py`의 `find_packages()`를 `find_packages(exclude=["tests"])`로 수정해 최상위 `tests` 모듈 충돌 방지.
+- **세부 변경 내역**:
+  - `/home/yongsoo/store_ws/src/store_web_ui/`:
+    - `package.xml`, `setup.py`, `setup.cfg`, `resource/store_web_ui`
+    - `store_web_ui/core/state_store.py`: 순수 Python `StateStore`(스냅샷/모드/비상정지/UI 이벤트/노드 헬스 `stale` 판정), `FrameBuffer`, `ros_image_to_jpeg`(`rgb8/bgr8/rgba8/bgra8/mono8`), `make_placeholder_jpeg`.
+    - `store_web_ui/server.py`: FastAPI + WebSocket(`/ws/state`) + MJPEG(`/stream/realsense`, `/stream/webcam`) + REST API(`/api/state`, `/api/text_cmd`, `/api/emergency_stop`, `/api/remote/verify`, `/api/remote/hand_cmd` + `X-Remote-Token`).
+    - `store_web_ui/web_ui_node.py`: `MultiThreadedExecutor` + `ReentrantCallbackGroup` + `BEST_EFFORT` 카메라 구독 + `TRANSIENT_LOCAL` `remote_override` 구독 + `VerifyRemoteKey` 비동기 호출 + 자체 `NodeHealth` 하트비트 + Uvicorn 백그라운드 스레드 정상 종료.
+    - `store_web_ui/static/index.html`, `style.css`, `app.js`: CDN 의존성 0개 오프라인 한국어 다크모드 대시보드(카메라 2채널, 텍스트 명령·프리셋·로그, 관리자 원격 조그/그리퍼, 노드 헬스 카드, 재고/폐기 탭 테이블, SVG 계층형 KG 그래프).
+    - `tests/test_web_ui.py`: 핵심 로직·API·토큰 인증·WebSocket·MJPEG 단위 테스트 22건.
+  - `/home/yongsoo/store_ws/src/store_bringup/launch/web_ui.launch.py`, `store_bot.launch.py`: 선택적 `enable_web_ui:=false` 기본값 런치 연동 추가.
+- **검증 결과**:
+  - `colcon build --symlink-install --packages-select store_web_ui store_bringup` 성공 (1.45s)
+  - `pytest -q src/store_web_ui/tests` **22 passed** (1.48s)
+  - `node --check app.js` 및 `python3 -m py_compile` 전 파일 통과
+  - 라이브 ROS 2(`ROS_DOMAIN_ID=40`) `web_ui_node` 기동 → `/store/ui_snapshot` 발행 → `/api/state`·`web_ui_node` 하트비트 수신·`SIGINT` 정상 종료 확인
+  - Codex 크로스모델 리뷰 `[P1]`/`[P2]` 4건 전건 반영 완료
+- **후속 조치**: 실기 `remote_node` / `orchestrator` / 카메라 노드와 함께 웹 브라우저에서 라이브 시연 확인.

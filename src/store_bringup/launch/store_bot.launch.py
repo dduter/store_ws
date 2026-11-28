@@ -10,13 +10,16 @@ def generate_launch_description():
     common = ("config_dir", "dry_run", "velocity", "acceleration")
     executor_options = ("step_delay_sec", "check_grip_detection", "apply_grasp_depth_offset")
 
-    def include(launch_file, arguments, condition):
+    def include(launch_file, arguments, condition, **mapped_arguments):
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution([
                 FindPackageShare("store_bringup"), "launch", launch_file,
             ])),
             condition=condition,
-            launch_arguments={name: LaunchConfiguration(name) for name in arguments}.items(),
+            launch_arguments={
+                **{name: LaunchConfiguration(name) for name in arguments},
+                **mapped_arguments,
+            }.items(),
         )
 
     mock = LaunchConfiguration("use_mock_robot")
@@ -30,6 +33,13 @@ def generate_launch_description():
         DeclareLaunchArgument("acceleration", default_value=""),
         DeclareLaunchArgument("check_grip_detection", default_value="true"),
         DeclareLaunchArgument("apply_grasp_depth_offset", default_value="true"),
+        DeclareLaunchArgument("enable_web_ui", default_value="false"),
+        DeclareLaunchArgument("web_ui_host", default_value="0.0.0.0"),
+        DeclareLaunchArgument("web_ui_port", default_value="8080"),
+        include(
+            "web_ui.launch.py", (), IfCondition(LaunchConfiguration("enable_web_ui")),
+            host=LaunchConfiguration("web_ui_host"), port=LaunchConfiguration("web_ui_port"),
+        ),
         include("mock_robot.launch.py", ("config_dir", "step_delay_sec"), IfCondition(mock)),
         include("executor.launch.py", (*common, *executor_options), UnlessCondition(mock)),
         include("remote.launch.py", common, IfCondition(LaunchConfiguration("enable_remote"))),

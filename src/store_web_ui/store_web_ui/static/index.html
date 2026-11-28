@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>24시 무인편의점 협동로봇 관제 대시보드</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>24시 무인편의점 협동로봇 관제 대시보드</h1>
+      <div class="badges"><span id="mode" class="badge">—</span><span id="socket" class="badge">연결 중</span><span id="estop-state" class="badge">비상 정지 상태 확인 중</span></div>
+    </div>
+    <div class="actions">
+      <button id="estop" class="danger">비상 정지 (E-STOP)</button>
+      <button id="resume">비상 정지 해제</button>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>실시간 카메라</h2>
+      <div class="camera-grid">
+        <figure><figcaption>RealSense Eye-in-Hand <span class="badge" id="realsense">대기</span></figcaption>
+          <img src="/stream/realsense" alt="RealSense Eye-in-Hand 영상"></figure>
+        <figure><figcaption>매장 웹캠 <span class="badge" id="webcam">대기</span></figcaption>
+          <img src="/stream/webcam" alt="매장 웹캠 영상"></figure>
+      </div>
+    </section>
+    <div class="workspace">
+      <section>
+        <h2>텍스트 명령 및 로그</h2>
+        <form id="command-form" class="actions">
+          <input id="command" aria-label="텍스트 명령" placeholder="로봇에게 요청할 내용을 입력하세요" required>
+          <button class="primary">전송</button>
+        </form>
+        <div class="actions presets" id="presets">
+          <button>빼빼로 하나 줘</button><button>파란색 짠 과자 하나 줘</button>
+          <button>유통기한 지난 거 폐기통에 버려줘</button><button>입고 정리해줘</button>
+        </div>
+        <div class="log-grid">
+          <div><h3>에이전트 로그</h3><ul class="feed" id="agent-log"></ul></div>
+          <div><h3>웹 UI 이벤트</h3><ul class="feed" id="events"></ul></div>
+        </div>
+      </section>
+      <section>
+        <h2>관리자 원격 조작 <span class="badge" id="remote-state">비활성</span></h2>
+        <form id="remote-form" class="actions">
+          <input id="admin-key" type="password" autocomplete="off" aria-label="관리자 키" placeholder="관리자 키" required>
+          <button class="primary" value="on">원격 모드 활성화</button><button value="off">원격 모드 해제</button>
+        </form>
+        <fieldset id="controls" disabled>
+          <legend>XY/Z 이동</legend>
+          <label class="step">이동량 <input id="step" type="range" min="20" max="60" value="40"> <output id="step-value" for="step">40 px</output></label>
+          <div class="jog">
+            <button class="up" data-vector="0,1,0" aria-label="위">↑</button>
+            <button class="left" data-vector="-1,0,0" aria-label="왼쪽">←</button>
+            <button class="down" data-vector="0,-1,0" aria-label="아래">↓</button>
+            <button class="right" data-vector="1,0,0" aria-label="오른쪽">→</button>
+            <button class="zplus" data-vector="0,0,1">+Z</button>
+            <button class="zminus" data-vector="0,0,-1">−Z</button>
+          </div>
+          <div class="actions gripper"><span>그리퍼</span><button id="open">열기</button><button id="close">닫기</button><button id="stop" class="danger">즉시 정지 (STOP)</button></div>
+        </fieldset>
+      </section>
+    </div>
+    <section>
+      <h2>노드 상태</h2>
+      <div class="health" id="health"></div>
+    </section>
+    <section>
+      <h2>재고 및 폐기 이력</h2>
+      <div class="actions tabs" role="tablist" aria-label="재고 및 폐기 이력">
+        <button id="inventory-tab" role="tab" aria-controls="inventory" aria-selected="true">재고</button>
+        <button id="disposal-tab" role="tab" aria-controls="disposal" aria-selected="false" tabindex="-1">폐기 이력</button>
+      </div>
+      <div id="inventory" role="tabpanel" aria-labelledby="inventory-tab"><table>
+        <thead><tr><th>추적 ID</th><th>상품명</th><th>상태</th><th>깊이</th></tr></thead><tbody id="inventory-rows"></tbody>
+      </table></div>
+      <div id="disposal" role="tabpanel" aria-labelledby="disposal-tab" hidden><table>
+        <thead><tr><th>추적 ID</th><th>폐기 사유</th></tr></thead><tbody id="disposal-rows"></tbody>
+      </table></div>
+    </section>
+    <section>
+      <h2>상품 지식 그래프</h2>
+      <div class="badges" id="kg-stats"></div>
+      <div class="graph-scroll" id="graph"></div>
+    </section>
+  </main>
+  <output id="toast" role="status" hidden></output>
+</body>
+</html>
